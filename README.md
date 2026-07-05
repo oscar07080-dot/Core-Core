@@ -51,6 +51,7 @@ Downloads are cached in `--cache-dir` (default `./cache`); re-runs reuse them.
 | `--duration` | 20 | edit length in seconds |
 | `--song-start` | 0 | offset into the song (pick the good part) |
 | `--reference` | — | edit video whose cut rhythm is copied |
+| `--scene-threshold` | 12.0 | cut-detection sensitivity for `--reference` (lower = catches more subtle cuts, risks false positives) |
 | `--intensity` | medium | cut density (`low`/`medium`/`high`) when no reference |
 | `--seed` | — | reproducible clip selection |
 | `--source-margin` | 0.5 | seconds skipped at each clip's start/end |
@@ -61,7 +62,7 @@ Downloads are cached in `--cache-dir` (default `./cache`); re-runs reuse them.
 
 1. **Acquire** — yt-dlp downloads (section-only when trimmed) or local globbing; still images (`jpg/png/webp`) are valid sources and become brief static shots.
 2. **Analyze** — librosa extracts BPM, beat times, onset (transient) times, and an energy curve from the song.
-3. **Pace** — with `--reference`, PySceneDetect finds the reference's cuts, expresses them in beat units at the reference's own tempo, rescales them to the new song's tempo, and snaps every cut to the new song's nearest beat/onset. Without a reference, a heuristic cuts every beat and densifies to onset-level in high-energy sections.
+3. **Pace** — with `--reference`, PySceneDetect (`ContentDetector`, tuned via `--scene-threshold`) finds the reference's cuts, expresses them in beat units at the reference's own tempo, rescales them to the new song's tempo, and snaps every cut to the new song's nearest beat/onset. Without a reference, a heuristic cuts every beat and densifies to onset-level in high-energy sections.
 4. **Assemble** — each segment gets a source clip (avoiding immediate repeats) and a varied in-point.
 5. **Render** — one ffmpeg pass: trim/scale/crop each segment to 1080x1920, hard-cut concat, song muxed as the only audio, H.264/AAC/`+faststart`.
 

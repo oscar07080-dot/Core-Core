@@ -24,6 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--clips-dir", help="directory of local video/image files")
 
     p.add_argument("--reference", help="reference edit video to copy cut pacing from")
+    p.add_argument("--scene-threshold", type=float, default=12.0, dest="scene_threshold",
+                   help="cut-detection sensitivity for --reference (lower = more sensitive, "
+                        "catches more subtle cuts but risks false positives; default 12.0)")
     p.add_argument("--subject", default="edit", help="label used for the output filename")
     p.add_argument("--output", help="output mp4 path (default: {subject}_{timestamp}.mp4)")
     p.add_argument("--duration", type=float, default=20.0, help="edit length in seconds (default 20)")
@@ -94,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import reference as ref_mod
 
         print(f"extracting cut rhythm from reference: {args.reference}")
-        template = ref_mod.extract_template(args.reference)
+        template = ref_mod.extract_template(args.reference, scene_threshold=args.scene_threshold)
         print(f"  {len(template.cut_lengths_in_beats)} cuts @ {template.source_bpm:.1f} bpm")
         boundaries = timeline.boundaries_from_template(template, grid, duration)
     else:

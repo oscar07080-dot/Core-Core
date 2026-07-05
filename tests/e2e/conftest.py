@@ -76,3 +76,31 @@ def reference_video(media_dir, click_song):
         path,
     )
     return path
+
+
+@pytest.fixture(scope="session")
+def similar_shots_video(media_dir):
+    """A ~4.5s video with hard cuts between NEARLY IDENTICAL shots (same
+    subject, only a slight color-tint change each cut) — mimics the reference
+    edit's mask-with-different-mouth-colors sequence that a motion-robust
+    detector (AdaptiveDetector) is prone to miss entirely, since its whole
+    design point is ignoring small frame-to-frame differences."""
+    path = str(media_dir / "similar_shots.mp4")
+    n = 9
+    inputs = []
+    graph = []
+    for i in range(n):
+        tint = 0x10 * i  # subtle, monotonically shifting tint per cut
+        color = f"0x{tint:02x}2020"
+        inputs += ["-f", "lavfi", "-i", f"color=c={color}:size=320x568:rate=30:duration=0.5"]
+        graph.append(f"[{i}:v]format=yuv420p[v{i}];")
+    labels = "".join(f"[v{i}]" for i in range(n))
+    graph.append(f"{labels}concat=n={n}:v=1:a=0[outv]")
+    _ffmpeg(
+        *inputs,
+        "-filter_complex", "".join(graph),
+        "-map", "[outv]",
+        "-c:v", "libx264",
+        path,
+    )
+    return path

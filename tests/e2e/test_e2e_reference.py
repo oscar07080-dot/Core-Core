@@ -13,6 +13,15 @@ def test_scene_detection_finds_hard_cuts(reference_video):
     assert 7 <= len(cuts) <= 13
 
 
+def test_scene_detection_catches_cuts_between_similar_shots(similar_shots_video):
+    """Regression test: AdaptiveDetector's motion-robustness made it blind to
+    hard cuts between visually similar consecutive clips (the reference video
+    had a 5.8s stretch with zero detected cuts because of this). ContentDetector
+    at the default threshold must catch most of the 8 cuts in this fixture."""
+    cuts = detect_cuts(similar_shots_video)
+    assert len(cuts) >= 6
+
+
 def test_template_extraction(reference_video):
     template = extract_template(reference_video)
     assert len(template.cut_lengths_in_beats) >= 8
