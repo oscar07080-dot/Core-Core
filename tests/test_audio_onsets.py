@@ -1,6 +1,6 @@
 import numpy as np
 
-from coreedit.audio import _onsets_with_strength
+from coreedit.audio import _onsets_with_strength, _rms_feature
 
 
 def _synthetic_note(sr: int, total: float, attack_start: float, ramp: float, freq: float = 440.0):
@@ -93,3 +93,45 @@ def test_min_spacing_wait_is_never_zero():
     y = _synthetic_note(sr, total=2.0, attack_start=1.0, ramp=0.05)
     times, _ = _onsets_with_strength(y, sr, min_spacing=0.0001)
     assert len(times) >= 1  # just needs to run without error and find the note
+
+
+# --- RMS-based feature: fixes onsets landing on timbre change instead of a loudness swell ---
+
+
+def test_rms_feature_matches_librosa_rms():
+    import librosa
+
+    sr = 22050
+    y = _synthetic_note(sr, total=2.0, attack_start=1.0, ramp=0.05)
+    out = _rms_feature(y=y, sr=sr, n_fft=2048, hop_length=512)
+    expected = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_onsets_with_rms_feature_detects_a_real_loudness_swell():
+    sr = 22050
+    y = _synthetic_note(sr, total=3.0, attack_start=1.5, ramp=0.15)
+    times, strengths = _onsets_with_strength(y, sr, delta=0.02, feature=_rms_feature)
+    assert len(times) >= 1
+    assert 1.4 <= times[0] <= 1.65
+    assert len(strengths) == len(times)
+
+
+def test_rms_feature_ignores_pure_timbre_change_at_constant_loudness():
+    """A frequency change with no loudness change is a real spectral-flux
+    trigger but should NOT register as an RMS-feature onset -- this is the
+    exact distinction that fixed cuts landing on timbre shifts instead of
+    the strum's actual loudness swell."""
+    sr = 22050
+    n = int(sr * 3.0)
+    t = np.arange(n) / sr
+    # constant envelope throughout; only the frequency changes partway through
+    y = np.where(t < 1.5, np.sin(2 * np.pi * 220.0 * t), np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+
+    rms_times, _ = _onsets_with_strength(y, sr, delta=0.02, feature=_rms_feature)
+    flux_times, _ = _onsets_with_strength(y, sr, delta=0.02)
+
+    near_switch_rms = [t for t in rms_times if 1.3 <= t <= 1.7]
+    near_switch_flux = [t for t in flux_times if 1.3 <= t <= 1.7]
+    assert near_switch_rms == []
+    assert len(near_switch_flux) >= 1

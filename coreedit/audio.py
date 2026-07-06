@@ -40,7 +40,7 @@ def analyze_song(
     path: str,
     start: float = 0.0,
     duration: float | None = None,
-    note_sensitivity: float = 0.05,
+    note_sensitivity: float = 0.02,
     note_min_spacing: float = 0.1,
 ) -> BeatGrid:
     """Analyze the rhythm of an audio (or video) file.
@@ -50,9 +50,9 @@ def analyze_song(
 
     `note_sensitivity` is the peak-picking threshold for melodic (guitar-like)
     onsets — lower catches more/quieter notes, higher misses more of them.
-    Librosa's own default (0.07) is tuned for full-mix/percussive-style sharp
-    transients; a separated harmonic stream's softer attacks warrant a lower
-    default here.
+    Tuned for the RMS-derivative novelty curve used for the harmonic stream
+    (see `_onsets_with_strength`), which has a different scale than librosa's
+    spectral-flux default.
 
     `note_min_spacing` is the minimum time between two melodic onsets.
     Librosa's own default minimum spacing is ~30ms, which is far shorter than
@@ -79,12 +79,19 @@ def analyze_song(
     # split into melodic (guitar/vocal-like sustained tones) vs percussive
     # (drum hits) components so cuts can follow one or the other on request
     y_harmonic, y_percussive = librosa.effects.hpss(y)
-    # a plucked/strummed note rings up gradually, so its onset-strength peak
-    # lags well behind the actual attack; a drum hit is already sharp enough
-    # that this barely matters, so only the harmonic stream needs the lower
-    # sensitivity threshold too.
+    # Guitar/melodic "onsets" are cut points meant to land on a strum's
+    # loudness swell. Standard spectral-flux novelty responds to *timbre*
+    # change, not loudness -- checked visually against a real reference
+    # edit's audio (waveform + detected onsets, zoomed to sub-second
+    # windows) and roughly half the detected onsets landed in flat/declining
+    # regions with no audible swell nearby. An RMS-derivative novelty curve
+    # (attack = where loudness is actually rising) tracked the real swells
+    # far more closely in the same check. Percussive (drum) hits are already
+    # sharp transients where plain spectral flux works fine, so only the
+    # harmonic stream switches feature.
     harmonic_times, harmonic_strength = _onsets_with_strength(
-        y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing
+        y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing,
+        feature=_rms_feature,
     )
     percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
 
@@ -109,8 +116,19 @@ def analyze_song(
     )
 
 
+def _rms_feature(y=None, sr=None, n_fft=2048, hop_length=512, **kwargs):
+    """Adapts librosa.feature.rms to the (y, sr, n_fft, hop_length) signature
+    librosa.onset.onset_strength expects of a `feature` callable -- rms()
+    itself takes frame_length, not n_fft/sr, and doesn't accept extra kwargs.
+    """
+    import librosa
+
+    return librosa.feature.rms(y=y, frame_length=n_fft, hop_length=hop_length)
+
+
 def _onsets_with_strength(
-    y: np.ndarray, sr: int, delta: float = 0.07, min_spacing: float = 0.03
+    y: np.ndarray, sr: int, delta: float = 0.07, min_spacing: float = 0.03,
+    feature=None,
 ) -> tuple[list[float], list[float]]:
     """Onset times paired with how pronounced each one is.
 
@@ -125,12 +143,16 @@ def _onsets_with_strength(
     `min_spacing` (seconds) is the minimum gap enforced between two onsets —
     librosa's own default is ~30ms (`wait` in frames), which readily lets a
     single note's natural energy flutter register as several onsets.
+
+    `feature` overrides the novelty-curve basis passed to
+    librosa.onset.onset_strength (defaults to its own spectral-flux feature).
     """
     import librosa
 
     hop_length = 512
     wait = max(1, round(min_spacing * sr / hop_length))
-    env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+    kwargs = {"feature": feature} if feature is not None else {}
+    env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length, **kwargs)
     peak_frames = librosa.onset.onset_detect(
         onset_envelope=env, sr=sr, units="frames", backtrack=False,
         delta=delta, wait=wait, hop_length=hop_length,

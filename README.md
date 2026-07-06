@@ -75,12 +75,17 @@ into the previous one, so accented notes reliably cut while quiet ones
 often don't. Tune this with `--section-variation` (0 = only accents cut,
 maximum variation; 1 = uniform, every single note/hit cuts; default 0.35).
 
-Melodic-note onset timing is backtracked from each note's loudest point to
-its actual attack (a strummed/plucked note rings up gradually, so the two
-can be tens of milliseconds apart), and detection is more sensitive than
-librosa's full-mix default since an isolated harmonic stream's attacks are
-softer. If it's still missing real notes, lower `--note-sensitivity`
-(default 0.05); if it's over-triggering on sustain/vibrato, raise it.
+Melodic notes are detected from the harmonic stream's RMS (loudness) rise,
+not spectral flux — checked visually against a real reference edit (plotting
+the waveform/amplitude envelope with detected onsets overlaid, zoomed to
+sub-second windows): spectral flux responds to *timbre* change and roughly
+half its detections landed in flat/declining regions with no audible swell
+nearby, while the loudness-rise approach tracked the real strums far more
+closely. Timing is then backtracked from each note's loudest point to its
+actual attack (a strummed/plucked note rings up gradually, so the two can be
+tens of milliseconds apart). If it's still missing real notes, lower
+`--note-sensitivity` (default 0.02); if it's over-triggering on sustain/
+vibrato, raise it.
 
 Detected notes are also required to be at least `--note-min-spacing`
 (default 0.1s) apart — librosa's own default minimum gap is ~30ms, which is
@@ -101,7 +106,7 @@ over-triggering.
 | `--scene-threshold` | 12.0 | cut-detection sensitivity for `--reference` (lower = catches more subtle cuts, risks false positives) |
 | `--intensity` | medium | cut density (`low`/`medium`/`high`) when no reference |
 | `--chorus` | — | `START:END` range to cut on every melodic note (repeatable) |
-| `--note-sensitivity` | 0.05 | melodic-note detection sensitivity (lower = catches more/quieter notes) |
+| `--note-sensitivity` | 0.02 | melodic-note detection sensitivity (lower = catches more/quieter notes) |
 | `--note-min-spacing` | 0.1 | minimum seconds between two detected melodic notes |
 | `--drum-buildup` | — | `START:END` range to cut on every drum hit (repeatable) |
 | `--auto-chorus` | off | auto-detect the chorus/build-up instead of specifying ranges |

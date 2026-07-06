@@ -45,10 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
                    metavar="START:END",
                    help="time range (seconds) to cut on every drum hit instead of the normal "
                         "pacing (repeatable)")
-    p.add_argument("--note-sensitivity", type=float, default=0.05, dest="note_sensitivity",
+    p.add_argument("--note-sensitivity", type=float, default=0.02, dest="note_sensitivity",
                    help="how easily a melodic note counts as an onset for --chorus/--auto-chorus "
                         "(lower = catches more/quieter notes but risks false triggers on sustain "
-                        "or vibrato; default 0.05, librosa's own full-mix default is 0.07)")
+                        "or vibrato; default 0.02)")
     p.add_argument("--note-min-spacing", type=float, default=0.1, dest="note_min_spacing",
                    help="minimum seconds between two detected melodic notes (lower allows faster "
                         "playing to register as separate notes, but risks a single sustained/"
