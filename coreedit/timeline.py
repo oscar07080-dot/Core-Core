@@ -14,6 +14,34 @@ INTENSITY_ENERGY_CUTOFF = {"low": 1.01, "medium": 0.75, "high": 0.5}
 MIN_SEGMENT = 0.1  # seconds; never emit cuts shorter than this
 
 
+def snap_boundaries_to_frame_grid(boundaries: list[float], fps: int) -> list[float]:
+    """Snap every boundary to the nearest output-frame timestamp (a multiple
+    of 1/fps), computed from each boundary's own absolute time.
+
+    Rendering applies an fps filter per segment (needed so `concat` sees a
+    uniform frame rate across segments of different source fps), which
+    rounds each segment's duration to a whole number of frames measured from
+    that segment's own start. Feeding it segments whose *intended* durations
+    already aren't frame-aligned means every segment absorbs a small
+    rounding error, and across many short segments (fast cut sections) those
+    errors compound into audio/video drift that grows over the section. This
+    fixes it at the source: durations derived from already-frame-aligned
+    boundaries are exact multiples of a frame, so there's nothing left to
+    round away, and no cumulative error can build (each boundary is snapped
+    independently, not against the previous one).
+    """
+    if not boundaries:
+        return boundaries
+    frame_dur = 1.0 / fps
+    snapped = [round(b / frame_dur) * frame_dur for b in boundaries]
+    result = [snapped[0]]
+    for b in snapped[1:]:
+        if b - result[-1] < frame_dur / 2:
+            b = result[-1] + frame_dur  # avoid a zero/negative-length segment
+        result.append(b)
+    return result
+
+
 def boundaries_from_template(
     template: RhythmTemplate, grid: BeatGrid, target_duration: float
 ) -> list[float]:

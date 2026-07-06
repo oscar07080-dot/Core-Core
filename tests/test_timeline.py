@@ -6,6 +6,7 @@ from coreedit.models import Clip
 from coreedit.timeline import (
     boundaries_from_heuristic,
     build_timeline,
+    snap_boundaries_to_frame_grid,
 )
 
 
@@ -84,3 +85,53 @@ def test_image_fits_any_duration():
 def test_empty_clips_raises():
     with pytest.raises(ValueError, match="no source clips"):
         build_timeline([0.0, 1.0], [])
+
+
+# --- snap_boundaries_to_frame_grid: fixes drift compounding across many segments ---
+
+
+def test_snap_rounds_to_nearest_frame():
+    fps = 30
+    frame = 1 / fps
+    boundaries = [0.0, 0.882, 1.486, 8.15]
+    snapped = snap_boundaries_to_frame_grid(boundaries, fps)
+    for b in snapped:
+        # every value must be (very nearly) an exact multiple of the frame duration
+        assert abs(round(b / frame) - b / frame) < 1e-6
+
+
+def test_snap_error_does_not_compound_across_many_boundaries():
+    # simulate the real bug: hundreds of short, non-frame-aligned segments
+    fps = 30
+    boundaries = [0.0]
+    t = 0.0
+    for _ in range(300):
+        t += 0.137  # deliberately not a multiple of 1/30
+        boundaries.append(t)
+
+    snapped = snap_boundaries_to_frame_grid(boundaries, fps)
+    # each boundary is snapped from its OWN absolute time, so error stays
+    # bounded by half a frame regardless of how many boundaries precede it,
+    # instead of growing with the count (which is what per-segment rounding
+    # against a locally-reset clock did)
+    frame = 1 / fps
+    for original, snapped_val in zip(boundaries, snapped):
+        assert abs(snapped_val - original) <= frame / 2 + 1e-9
+
+
+def test_snap_keeps_boundaries_strictly_increasing():
+    fps = 30
+    # two boundaries close enough to collide onto the same frame after snapping
+    boundaries = [0.0, 0.01, 0.02, 1.0]
+    snapped = snap_boundaries_to_frame_grid(boundaries, fps)
+    assert snapped == sorted(snapped)
+    assert len(snapped) == len(set(snapped))
+
+
+def test_snap_preserves_zero_start():
+    snapped = snap_boundaries_to_frame_grid([0.0, 1.234, 5.0], 30)
+    assert snapped[0] == 0.0
+
+
+def test_snap_empty_returns_empty():
+    assert snap_boundaries_to_frame_grid([], 30) == []

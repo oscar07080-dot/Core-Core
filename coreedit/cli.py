@@ -170,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
         boundaries = timeline.apply_section_overrides(
             boundaries, grid, overrides, seed=args.seed, min_keep_prob=args.section_variation
         )
+    # align cuts to the output frame grid so per-segment fps conversion at
+    # render time can't round each one, which would otherwise compound into
+    # audio/video drift across a run of many short segments
+    boundaries = timeline.snap_boundaries_to_frame_grid(boundaries, args.fps)
     print(f"{len(boundaries) - 1} segments over {duration:.1f}s")
 
     # 4. build the timeline

@@ -101,7 +101,7 @@ softer. If it's still missing real notes, lower `--note-sensitivity`
 1. **Acquire** — yt-dlp downloads (section-only when trimmed) or local globbing; still images (`jpg/png/webp`) are valid sources and become brief static shots.
 2. **Analyze** — librosa extracts BPM, beat times, onset (transient) times, an energy curve, and (via harmonic/percussive source separation) separate melodic-note and drum-hit onset streams from the song.
 3. **Pace** — with `--reference`, PySceneDetect (`ContentDetector`, tuned via `--scene-threshold`) finds the reference's cuts, expresses them in beat units at the reference's own tempo, rescales them to the new song's tempo, and snaps every cut to the new song's nearest beat/onset. Without a reference, a heuristic cuts every beat and densifies to onset-level in high-energy sections. `--chorus`/`--drum-buildup`/`--auto-chorus` then override specific time ranges to cut on every melodic note or every drum hit instead.
-4. **Assemble** — each segment gets a source clip (avoiding immediate repeats) and a varied in-point.
+4. **Assemble** — every cut boundary is snapped to the output's frame grid (using each boundary's own absolute time, not a running sum) before clips are assigned, so rendering can't round segment durations in a way that compounds into audio/video drift across a run of many short cuts. Each segment then gets a source clip (avoiding immediate repeats) and a varied in-point.
 5. **Render** — one ffmpeg pass: trim/scale/crop each segment to 1080x1920, hard-cut concat, song muxed as the only audio, H.264/AAC/`+faststart`.
 
 ## Tests
