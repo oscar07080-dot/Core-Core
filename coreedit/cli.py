@@ -60,8 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "regardless of accent; default 0.35)")
     p.add_argument("--drum-variation", type=float, default=None, dest="drum_variation",
                    help="same as --section-variation but for --drum-buildup ranges specifically "
-                        "(lower = faster/denser drum cutting); defaults to --section-variation's "
-                        "value if not given")
+                        "(1 = cut on every drum hit, fastest; lower = only accented hits cut); "
+                        "defaults to --section-variation's value if not given")
     p.add_argument("--no-repeat-window", type=int, default=3, dest="no_repeat_window",
                    help="how many recent clips to avoid reusing back-to-back")
     p.add_argument("--source-margin", type=float, default=0.5, dest="source_margin",
@@ -142,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(clips)} source clip(s) ready")
 
     # 2. analyze the song
-    print("analyzing song rhythm...")
+    backend = "madmom (neural)" if audio._madmom() else "librosa"
+    print(f"analyzing song rhythm... [{backend}]")
     grid = audio.analyze_song(
         args.song, start=args.song_start, duration=args.duration,
         note_sensitivity=args.note_sensitivity, note_min_spacing=args.note_min_spacing,
@@ -176,9 +177,9 @@ def main(argv: list[str] | None = None) -> int:
                   "(cutting on every drum hit)")
     if overrides:
         boundaries = timeline.apply_section_overrides(
-            boundaries, grid, overrides, seed=args.seed,
-            min_keep_prob=args.section_variation,
-            percussive_min_keep_prob=args.drum_variation,
+            boundaries, grid, overrides,
+            variation=args.section_variation,
+            drum_variation=args.drum_variation,
         )
     # align cuts to the output frame grid so per-segment fps conversion at
     # render time can't round each one, which would otherwise compound into

@@ -1,9 +1,7 @@
-import random
-
 import pytest
 
 from coreedit.models import BeatGrid, SectionOverride
-from coreedit.timeline import apply_section_overrides, boundaries_from_heuristic, thin_onsets_by_strength
+from coreedit.timeline import apply_section_overrides, boundaries_from_heuristic, select_accent_onsets
 
 
 def test_harmonic_override_uses_harmonic_onsets(steady_grid):
@@ -90,43 +88,75 @@ def test_result_stays_monotonic_and_reaches_duration(steady_grid):
     assert result[-1] == pytest.approx(20.0)
 
 
-# --- thin_onsets_by_strength: the fix for "chorus shouldn't be a constant speed" ---
+# --- select_accent_onsets: deterministic accent selection ("in tune", not random) ---
 
 
-def test_thin_onsets_no_strength_data_keeps_everything():
+def test_select_no_strength_data_keeps_everything():
     times = [1.0, 2.0, 3.0, 4.0]
-    kept = thin_onsets_by_strength(times, [], random.Random(0), min_keep_prob=0.0)
+    kept = select_accent_onsets(times, [], variation=0.0)
     assert kept == times
 
 
-def test_thin_onsets_zero_strength_never_kept_at_min_prob_zero():
+def test_select_zero_strength_never_kept_at_variation_zero():
     times = [1.0, 2.0, 3.0, 4.0]
     strengths = [5.0, 0.0, 5.0, 0.0]  # bimodal: accented / silent
-    kept = thin_onsets_by_strength(times, strengths, random.Random(0), min_keep_prob=0.0)
-    assert kept == [1.0, 3.0]  # first onset always kept; zero-strength ones never are
+    kept = select_accent_onsets(times, strengths, variation=0.0)
+    assert kept == [1.0, 3.0]
 
 
-def test_thin_onsets_min_keep_prob_one_keeps_everything_regardless_of_strength():
+def test_select_variation_one_keeps_everything_regardless_of_strength():
     times = [1.0, 2.0, 3.0]
     strengths = [1.0, 0.001, 5.0]
-    kept = thin_onsets_by_strength(times, strengths, random.Random(0), min_keep_prob=1.0)
+    kept = select_accent_onsets(times, strengths, variation=1.0)
     assert kept == times
 
 
-def test_thin_onsets_deterministic_with_same_seed():
-    times = list(range(30))
-    strengths = [(i % 5) for i in range(30)]
-    a = thin_onsets_by_strength(times, strengths, random.Random(42), min_keep_prob=0.3)
-    b = thin_onsets_by_strength(times, strengths, random.Random(42), min_keep_prob=0.3)
+def test_select_is_deterministic():
+    times = [i * 0.25 for i in range(30)]
+    strengths = [(i % 5) + 0.1 for i in range(30)]
+    a = select_accent_onsets(times, strengths, variation=0.3)
+    b = select_accent_onsets(times, strengths, variation=0.3)
     assert a == b
 
 
-def test_thin_onsets_lower_min_keep_prob_thins_more_on_average():
-    times = list(range(200))
-    strengths = [(i % 4) for i in range(200)]  # mix of strong/weak onsets
-    uniform = thin_onsets_by_strength(times, strengths, random.Random(1), min_keep_prob=1.0)
-    varied = thin_onsets_by_strength(times, strengths, random.Random(1), min_keep_prob=0.1)
+def test_select_repeated_riff_cuts_identically_each_repetition():
+    """The core 'in tune' property the probabilistic version lacked: the same
+    musical phrase must produce the same cut pattern every time it repeats."""
+    riff_strengths = [5.0, 0.5, 2.0, 0.5]  # one bar: accent, weak, medium, weak
+    times = [i * 0.25 for i in range(16)]  # four repetitions of the bar
+    strengths = riff_strengths * 4
+    kept = select_accent_onsets(times, strengths, variation=0.35, local_window=1.0)
+
+    kept_set = set(kept)
+    pattern_per_bar = [
+        tuple((i * 0.25 + bar * 1.0) in kept_set for i in range(4))
+        for bar in range(4)
+    ]
+    assert pattern_per_bar[0] == pattern_per_bar[1] == pattern_per_bar[2] == pattern_per_bar[3]
+    # and every bar's accent (the 5.0 note) must cut
+    assert all(p[0] for p in pattern_per_bar)
+
+
+def test_select_lower_variation_thins_more():
+    times = [i * 0.25 for i in range(200)]
+    strengths = [(i % 4) + 0.2 for i in range(200)]  # mix of strong/weak onsets
+    uniform = select_accent_onsets(times, strengths, variation=1.0)
+    varied = select_accent_onsets(times, strengths, variation=0.1)
     assert len(varied) < len(uniform)
+
+
+def test_select_max_gap_promotes_strongest_skipped_onset():
+    # one accent at each end, a long weak stretch in between
+    times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    strengths = [10.0, 1.0, 3.0, 1.0, 1.0, 10.0]
+    no_fill = select_accent_onsets(times, strengths, variation=0.1, local_window=100.0)
+    assert no_fill == [0.0, 5.0]
+    filled = select_accent_onsets(times, strengths, variation=0.1, local_window=100.0, max_gap=2.0)
+    # the strongest onset inside the oversized gap (2.0s, strength 3.0) gets promoted,
+    # then the remaining sub-gaps are filled the same way until none exceeds max_gap
+    assert 2.0 in filled
+    for a, b in zip(filled, filled[1:]):
+        assert b - a <= 2.0 + 1e-9
 
 
 def _grid_with_strengths() -> BeatGrid:
@@ -145,8 +175,8 @@ def test_apply_section_overrides_thins_chorus_with_real_strength_data():
     base = [0.0, 10.0]
     override = SectionOverride(start=0.0, end=10.0, kind="harmonic")
 
-    uniform = apply_section_overrides(base, grid, [override], seed=1, min_keep_prob=1.0)
-    varied = apply_section_overrides(base, grid, [override], seed=1, min_keep_prob=0.1)
+    uniform = apply_section_overrides(base, grid, [override], variation=1.0)
+    varied = apply_section_overrides(base, grid, [override], variation=0.1)
 
     # uniform mode cuts on literally every note (50 onsets -> ~51 boundaries)
     assert len(uniform) >= 45
@@ -154,75 +184,78 @@ def test_apply_section_overrides_thins_chorus_with_real_strength_data():
     assert len(varied) < len(uniform) * 0.6
 
 
+def test_apply_section_overrides_is_deterministic():
+    grid = _grid_with_strengths()
+    base = [0.0, 10.0]
+    override = SectionOverride(start=0.0, end=10.0, kind="harmonic")
+    a = apply_section_overrides(base, grid, [override], variation=0.35)
+    b = apply_section_overrides(base, grid, [override], variation=0.35)
+    assert a == b
+
+
 # --- local-window normalization: fixes "some parts too rapid, some not rapid enough" ---
 
 
-def test_thin_onsets_local_window_treats_a_quiet_passage_fairly():
+def test_select_local_window_treats_a_quiet_passage_fairly():
     """A quiet passage's own accents shouldn't be crushed just because one
     loud passage elsewhere in the range has a much higher peak -- each
     passage's cut rate should reflect its own dynamics."""
     # quiet passage 0-5s: accents at strength 1.0 every 4th note, rest 0.04
     # loud passage 10-15s: accents at strength 10.0 every 4th note, rest 0.4
-    # (same 10x ratio locally, wildly different absolute scale)
+    # (same relative accent ratio locally, wildly different absolute scale)
     times = [round(i * 0.2, 4) for i in range(25)] + [round(10 + i * 0.2, 4) for i in range(25)]
     strengths = [1.0 if i % 4 == 0 else 0.04 for i in range(25)] + \
                 [10.0 if i % 4 == 0 else 0.4 for i in range(25)]
 
-    global_peak_kept = thin_onsets_by_strength(
-        times, strengths, random.Random(3), min_keep_prob=0.1, local_window=1000.0,
-    )
-    local_kept = thin_onsets_by_strength(
-        times, strengths, random.Random(3), min_keep_prob=0.1, local_window=2.0,
-    )
+    global_peak_kept = select_accent_onsets(times, strengths, variation=0.5, local_window=1000.0)
+    local_kept = select_accent_onsets(times, strengths, variation=0.5, local_window=2.0)
 
     quiet_global = [t for t in global_peak_kept if t < 5.0]
     quiet_local = [t for t in local_kept if t < 5.0]
     # with a global peak (set by the loud passage), the quiet passage's own
-    # accents (strength 1.0 vs the loud passage's 10.0) look weak and get
-    # thinned much harder than with local comparison
+    # accents (strength 1.0 vs the loud passage's 10.0) fall below the
+    # threshold entirely; with local comparison they cut like accents should
     assert len(quiet_local) > len(quiet_global)
 
 
-def test_thin_onsets_local_window_keeps_both_passages_proportional():
+def test_select_local_window_keeps_both_passages_proportional():
     times = [round(i * 0.2, 4) for i in range(25)] + [round(10 + i * 0.2, 4) for i in range(25)]
     strengths = [1.0 if i % 4 == 0 else 0.04 for i in range(25)] + \
                 [10.0 if i % 4 == 0 else 0.4 for i in range(25)]
 
-    kept = thin_onsets_by_strength(times, strengths, random.Random(5), min_keep_prob=0.05, local_window=2.0)
+    kept = select_accent_onsets(times, strengths, variation=0.5, local_window=2.0)
     quiet_kept = [t for t in kept if t < 5.0]
     loud_kept = [t for t in kept if t >= 10.0]
-    # roughly comparable retention rate in both passages (each ~6-7 accents
-    # out of 25 onsets), not one passage almost entirely dropped
+    # both passages have accents every 4th note; deterministic local
+    # comparison must keep exactly the accents in each, so equal counts
     assert len(quiet_kept) > 0
-    assert abs(len(quiet_kept) - len(loud_kept)) <= 4
+    assert len(quiet_kept) == len(loud_kept)
 
 
 # --- separate percussive variation (--drum-variation): speeds up drums independently ---
 
 
-def test_percussive_min_keep_prob_overrides_harmonic_variation():
+def test_drum_variation_overrides_harmonic_variation():
     grid = _grid_with_strengths()
     base = [0.0, 10.0]
     overrides = [SectionOverride(start=0.0, end=10.0, kind="percussive")]
 
     harmonic_setting_ignored = apply_section_overrides(
-        base, grid, overrides, seed=2, min_keep_prob=0.9, percussive_min_keep_prob=0.05,
+        base, grid, overrides, variation=1.0, drum_variation=0.05,
     )
-    # percussive_min_keep_prob (0.05, aggressive thinning) should govern here,
-    # not min_keep_prob (0.9, near-uniform) which only applies to harmonic
+    # drum_variation (0.05, accents only) should govern here, not
+    # variation (1.0, keep-everything) which only applies to harmonic ranges
     uniform_percussive = apply_section_overrides(
-        base, grid, overrides, seed=2, min_keep_prob=0.9, percussive_min_keep_prob=0.9,
+        base, grid, overrides, variation=1.0, drum_variation=1.0,
     )
     assert len(harmonic_setting_ignored) < len(uniform_percussive)
 
 
-def test_percussive_min_keep_prob_defaults_to_min_keep_prob():
+def test_drum_variation_defaults_to_variation():
     grid = _grid_with_strengths()
     base = [0.0, 10.0]
     overrides = [SectionOverride(start=0.0, end=10.0, kind="percussive")]
 
-    explicit = apply_section_overrides(base, grid, overrides, seed=4, min_keep_prob=0.2)
-    same_explicit = apply_section_overrides(
-        base, grid, overrides, seed=4, min_keep_prob=0.2, percussive_min_keep_prob=0.2,
-    )
-    assert explicit == same_explicit
+    implicit = apply_section_overrides(base, grid, overrides, variation=0.2)
+    explicit = apply_section_overrides(base, grid, overrides, variation=0.2, drum_variation=0.2)
+    assert implicit == explicit

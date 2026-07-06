@@ -12,6 +12,75 @@ from .models import BeatGrid, SectionOverride
 
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
 
+_MADMOM = None  # cached import result: module when available, False when not
+
+
+def _madmom():
+    """Import madmom if installed, applying compatibility shims first.
+
+    madmom 0.16.1 (the last PyPI release) predates Python 3.10 and numpy 2:
+    it imports MutableSequence from `collections` (moved to collections.abc)
+    and uses the removed np.int/np.float/np.bool aliases -- including inside
+    its *compiled* Cython modules, where the source can't be patched.
+    Injecting the old names before import fixes both on a pristine install.
+    Returns the module, or False when madmom isn't installed.
+    """
+    global _MADMOM
+    if _MADMOM is not None:
+        return _MADMOM
+    try:
+        import collections
+        import collections.abc
+
+        for name in ("MutableSequence", "MutableMapping", "Iterable", "Callable"):
+            if not hasattr(collections, name):
+                setattr(collections, name, getattr(collections.abc, name))
+        for alias, typ in (("int", int), ("float", float), ("bool", bool)):
+            if not hasattr(np, alias):
+                setattr(np, alias, typ)
+        import madmom  # noqa: F401
+
+        _MADMOM = madmom
+    except ImportError:
+        _MADMOM = False
+    return _MADMOM
+
+
+def _madmom_onsets(y: np.ndarray, sr: int, min_spacing: float) -> tuple[list[float], list[float]]:
+    """Neural (CNN) onset detection: times plus per-onset activation strength.
+
+    The CNN reports each onset at its annotated attack time directly (10ms
+    resolution), so no backtracking is needed, and its activation value is a
+    0..1 confidence that doubles as an accent-strength measure.
+    """
+    from madmom.audio.signal import Signal
+    from madmom.features.onsets import CNNOnsetProcessor, OnsetPeakPickingProcessor
+
+    sig = Signal(y.astype(np.float32), sample_rate=sr)
+    act = CNNOnsetProcessor()(sig)
+    picker = OnsetPeakPickingProcessor(
+        fps=100, threshold=0.3, smooth=0.05, pre_max=0.05, post_max=0.05,
+        combine=max(min_spacing, 0.01),
+    )
+    times = picker(act)
+    strengths = [float(act[min(int(round(t * 100)), len(act) - 1)]) for t in times]
+    return [float(t) for t in times], strengths
+
+
+def _madmom_beats(y: np.ndarray, sr: int) -> tuple[list[float], float]:
+    """Neural beat tracking (RNN + DBN): beat times plus derived BPM."""
+    from madmom.audio.signal import Signal
+    from madmom.features.beats import DBNBeatTrackingProcessor, RNNBeatProcessor
+
+    sig = Signal(y.astype(np.float32), sample_rate=sr)
+    beats = DBNBeatTrackingProcessor(fps=100)(RNNBeatProcessor()(sig))
+    beat_times = [float(b) for b in beats]
+    if len(beat_times) >= 2:
+        bpm = 60.0 / float(np.median(np.diff(beat_times)))
+    else:
+        bpm = 0.0
+    return beat_times, bpm
+
 
 def _load_audio(path: str, start: float, duration: float | None):
     """Load mono audio via librosa; video containers go through an ffmpeg
@@ -48,11 +117,15 @@ def analyze_song(
     Times in the returned BeatGrid are relative to `start`, i.e. they map
     directly onto the output edit's timeline.
 
+    When madmom is installed it is used for beat tracking and all onset
+    detection (neural detectors, clearly more accurate — see _madmom());
+    otherwise the librosa-based heuristics below are the fallback.
+
     `note_sensitivity` is the peak-picking threshold for melodic (guitar-like)
-    onsets — lower catches more/quieter notes, higher misses more of them.
-    Tuned for the RMS-derivative novelty curve used for the harmonic stream
-    (see `_onsets_with_strength`), which has a different scale than librosa's
-    spectral-flux default.
+    onsets in the librosa fallback — lower catches more/quieter notes, higher
+    misses more of them. Tuned for the RMS-derivative novelty curve used for
+    the harmonic stream (see `_onsets_with_strength`); the madmom path uses
+    the CNN's own calibrated threshold instead and ignores this.
 
     `note_min_spacing` is the minimum time between two melodic onsets.
     Librosa's own default minimum spacing is ~30ms, which is far shorter than
@@ -70,30 +143,49 @@ def analyze_song(
         raise ValueError(f"no audio decoded from {path} at offset {start}s")
     total = float(len(y)) / sr
 
-    tempo, beat_times = librosa.beat.beat_track(y=y, sr=sr, units="time")
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-    onset_times = librosa.onset.onset_detect(
-        onset_envelope=onset_env, sr=sr, units="time", backtrack=False
-    )
-
     # split into melodic (guitar/vocal-like sustained tones) vs percussive
     # (drum hits) components so cuts can follow one or the other on request
     y_harmonic, y_percussive = librosa.effects.hpss(y)
-    # Guitar/melodic "onsets" are cut points meant to land on a strum's
-    # loudness swell. Standard spectral-flux novelty responds to *timbre*
-    # change, not loudness -- checked visually against a real reference
-    # edit's audio (waveform + detected onsets, zoomed to sub-second
-    # windows) and roughly half the detected onsets landed in flat/declining
-    # regions with no audible swell nearby. An RMS-derivative novelty curve
-    # (attack = where loudness is actually rising) tracked the real swells
-    # far more closely in the same check. Percussive (drum) hits are already
-    # sharp transients where plain spectral flux works fine, so only the
-    # harmonic stream switches feature.
-    harmonic_times, harmonic_strength = _onsets_with_strength(
-        y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing,
-        feature=_rms_feature,
-    )
-    percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
+
+    if _madmom():
+        # Preferred backend: madmom's neural detectors. Audited against the
+        # real reference song's waveform, its CNN onsets sit at the base of
+        # nearly every rising swell on the separated stems -- including
+        # subtle attacks the librosa-based heuristics below miss -- and its
+        # RNN+DBN beat tracking is far more stable than librosa's. Optional
+        # because installing madmom is nontrivial (see README).
+        beat_times, bpm = _madmom_beats(y, sr)
+        onset_times, _ = _madmom_onsets(y, sr, min_spacing=0.03)
+        harmonic_times, harmonic_strength = _madmom_onsets(
+            y_harmonic, sr, min_spacing=note_min_spacing
+        )
+        percussive_times, percussive_strength = _madmom_onsets(
+            y_percussive, sr, min_spacing=0.03
+        )
+    else:
+        tempo, beat_times = librosa.beat.beat_track(y=y, sr=sr, units="time")
+        beat_times = [float(t) for t in beat_times]
+        bpm = float(np.atleast_1d(tempo)[0])
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        onset_times = librosa.onset.onset_detect(
+            onset_envelope=onset_env, sr=sr, units="time", backtrack=False
+        )
+        onset_times = [float(t) for t in onset_times]
+        # Guitar/melodic "onsets" are cut points meant to land on a strum's
+        # loudness swell. Standard spectral-flux novelty responds to *timbre*
+        # change, not loudness -- checked visually against a real reference
+        # edit's audio (waveform + detected onsets, zoomed to sub-second
+        # windows) and roughly half the detected onsets landed in flat/declining
+        # regions with no audible swell nearby. An RMS-derivative novelty curve
+        # (attack = where loudness is actually rising) tracked the real swells
+        # far more closely in the same check. Percussive (drum) hits are already
+        # sharp transients where plain spectral flux works fine, so only the
+        # harmonic stream switches feature.
+        harmonic_times, harmonic_strength = _onsets_with_strength(
+            y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing,
+            feature=_rms_feature,
+        )
+        percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
 
     rms = librosa.feature.rms(y=y)[0]
     peak = float(rms.max()) if rms.size else 0.0
@@ -101,11 +193,10 @@ def analyze_song(
     hop = 512  # librosa default for rms/onset frames
     energy_times = (np.arange(len(rms)) * hop / sr).tolist()
 
-    bpm = float(np.atleast_1d(tempo)[0])
     return BeatGrid(
         bpm=bpm,
-        beat_times=[float(t) for t in beat_times],
-        onset_times=[float(t) for t in onset_times],
+        beat_times=beat_times,
+        onset_times=onset_times,
         energy_times=energy_times,
         energy=energy,
         duration=total,

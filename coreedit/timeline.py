@@ -93,67 +93,90 @@ def boundaries_from_heuristic(
     return boundaries
 
 
-def thin_onsets_by_strength(
+def select_accent_onsets(
     times: list[float],
     strengths: list[float],
-    rng: random.Random,
-    min_keep_prob: float = 0.35,
+    variation: float = 0.35,
     local_window: float = 2.0,
+    max_gap: float | None = None,
 ) -> list[float]:
-    """Keep onsets with probability scaled by how pronounced each one is, so
-    accented notes/hits reliably get their own cut while quieter ones often
-    merge into the previous segment. Without this, cutting on "every onset"
-    is a metronomically constant rate; this gives it real musical texture.
+    """Deterministically keep the onsets that are accents relative to their
+    local neighborhood: an onset gets a cut iff its strength is at least
+    `(1 - variation)` of the loudest onset within `local_window` seconds of
+    it. `variation=1` keeps every onset (uniform); `variation=0` keeps only
+    exact local peaks.
 
-    Each onset's strength is compared against the loudest onset within
-    `local_window` seconds of it, not the single loudest onset across the
-    whole (possibly many-second) override range. A global comparison makes a
-    quieter passage look uniformly weak next to one loud peak anywhere in
-    the section (under-cut there) while a locally loud passage looks
-    uniformly strong (over-cut) -- i.e. exactly "some parts too rapid, some
-    not rapid enough" relative to that passage's own dynamics. Comparing
-    locally instead means the cut rate tracks each passage's own relative
-    accents.
+    This replaced a probabilistic version (keep-probability scaled by
+    strength): random per-note coin flips meant a repeated riff cut
+    differently on each repetition, strong accents sometimes didn't cut at
+    all, and runs of weak notes sometimes all cut -- individually beat-aligned
+    but rhythmically arbitrary, which reads as "not in tune with the music"
+    even when every cut lands on a real note. A deterministic accent
+    threshold makes the same musical phrase always produce the same cut
+    pattern, with every accent reliably cutting.
 
-    `min_keep_prob` is the keep-probability floor for the weakest onset
-    (1.0 = keep everything, uniform; lower = more variation). If no strength
-    data is available (mismatched/empty `strengths`), every onset is treated
-    as equally strong and always kept.
+    The comparison is against the *local* peak, not the loudest onset across
+    the whole range, so a quiet passage's own accents still cut instead of
+    being crushed by one loud peak elsewhere in the section.
+
+    `max_gap` (seconds), when set, guarantees no stretch between kept onsets
+    exceeds it: the strongest skipped onset inside an oversized gap is
+    promoted (repeatedly, until every gap fits). This bounds "not rapid
+    enough" stretches without disturbing accent timing elsewhere.
+
+    If strength data is missing/mismatched, every onset is treated as equally
+    strong and kept.
     """
     if not times:
         return []
     if len(strengths) != len(times):
         strengths = [1.0] * len(times)
-    kept = [times[0]]  # always keep the first onset in range
+    threshold = 1.0 - variation
     half = local_window / 2
-    for i in range(1, len(times)):
-        t, s = times[i], strengths[i]
+
+    kept = set()
+    for i, (t, s) in enumerate(zip(times, strengths)):
         local_peak = max(
             sj for tj, sj in zip(times, strengths) if t - half <= tj <= t + half
         )
-        rel = (s / local_peak) if local_peak > 0 else 1.0
-        keep_prob = min_keep_prob + (1 - min_keep_prob) * rel
-        if rng.random() < keep_prob:
-            kept.append(t)
-    return kept
+        if local_peak <= 0 or s >= threshold * local_peak:
+            kept.add(i)
+
+    if max_gap is not None and kept:
+        while True:
+            ordered = sorted(kept)
+            oversized = None
+            for a, b in zip(ordered, ordered[1:]):
+                if times[b] - times[a] > max_gap and b - a > 1:
+                    oversized = (a, b)
+                    break
+            if oversized is None:
+                break
+            a, b = oversized
+            best = max(range(a + 1, b), key=lambda j: strengths[j])
+            kept.add(best)
+
+    return [times[i] for i in sorted(kept)]
 
 
 def apply_section_overrides(
     boundaries: list[float],
     grid: BeatGrid,
     overrides: list[SectionOverride],
-    seed: int | None = None,
-    min_keep_prob: float = 0.35,
-    percussive_min_keep_prob: float | None = None,
+    variation: float = 0.35,
+    drum_variation: float | None = None,
     local_window: float = 2.0,
 ) -> list[float]:
     """Within each override's time range, replace the normal cut boundaries
     with the grid's per-note ("harmonic") or per-hit ("percussive") onsets,
-    thinned by onset strength so the pacing isn't a constant, metronomic rate.
+    keeping the ones that are accents relative to their local neighborhood
+    (see select_accent_onsets). Cut timing in these ranges is fully
+    deterministic — the same song and settings always produce the same cut
+    pattern; --seed only affects which clips fill the segments.
 
-    `percussive_min_keep_prob` lets the drum-hit ("percussive") ranges use a
-    different variation/speed than the melodic ("harmonic") ones -- defaults
-    to `min_keep_prob` (same value for both) when not given.
+    `drum_variation` lets the drum-hit ("percussive") ranges use a different
+    variation/speed than the melodic ("harmonic") ones -- defaults to
+    `variation` (same value for both) when not given.
 
     Boundaries outside every override range are left untouched.
     """
@@ -169,21 +192,25 @@ def apply_section_overrides(
     if not clipped:
         return boundaries
 
-    rng = random.Random(seed)
+    # never let an override stretch go more than ~2 beats without a cut
+    max_gap = 2 * grid.beat_period if grid is not None else None
+
     points = {b for b in boundaries if not any(o.start < b < o.end for o in clipped)}
     for o in clipped:
         if o.kind == "harmonic":
             times, strengths = grid.harmonic_onset_times, grid.harmonic_onset_strength
-            keep_prob = min_keep_prob
+            var = variation
         else:
             times, strengths = grid.percussive_onset_times, grid.percussive_onset_strength
-            keep_prob = percussive_min_keep_prob if percussive_min_keep_prob is not None else min_keep_prob
+            var = drum_variation if drum_variation is not None else variation
         if len(strengths) != len(times):
             strengths = [1.0] * len(times)
         in_range = [(t, s) for t, s in zip(times, strengths) if o.start <= t <= o.end]
         range_times = [t for t, _ in in_range]
         range_strengths = [s for _, s in in_range]
-        points.update(thin_onsets_by_strength(range_times, range_strengths, rng, keep_prob, local_window))
+        points.update(
+            select_accent_onsets(range_times, range_strengths, var, local_window, max_gap)
+        )
         points.add(o.start)
         points.add(o.end)
     points.add(0.0)

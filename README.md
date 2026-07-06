@@ -12,6 +12,26 @@ Requires Python 3.10+ and the `ffmpeg`/`ffprobe` binaries on your PATH.
 pip install -r requirements.txt
 ```
 
+### Optional: madmom (recommended for noticeably better cut timing)
+
+When [madmom](https://github.com/CPJKU/madmom) is importable, its neural
+beat tracker and CNN onset detector replace the librosa heuristics for all
+rhythm analysis — audited against a real song's waveform, its onsets land
+at the base of nearly every real swell, including subtle attacks the
+heuristics miss. The tool applies the needed Python 3.10+/numpy 2
+compatibility shims automatically at import, so the old 0.16.1 release
+works unpatched. Installing it is the only fiddly part:
+
+```bash
+pip install cython
+# on Debian/Ubuntu, the distro-patched setuptools breaks the build; replace it:
+pip install --ignore-installed setuptools wheel
+pip install madmom
+```
+
+If the install fails, everything still works on the librosa fallback —
+`edit.py` prints which backend it's using.
+
 ## Usage
 
 Sources come from **either** a directory of local files **or** a list of URLs
@@ -69,18 +89,23 @@ source separation:
   the wrong section (or none), fall back to explicit `--chorus`/`--drum-buildup`
   timestamps, which always take precedence over `--auto-chorus`.
 
-Cuts inside these ranges aren't a metronomically constant rate: each
-note/hit's actual strength decides whether it gets its own cut or merges
-into the previous one, so accented notes reliably cut while quiet ones
-often don't. Each onset is compared against the loudest onset within 2s of
-it, not the single loudest onset across the whole range — a purely global
-comparison makes a quieter passage look uniformly weak next to one loud
-peak elsewhere in the section (under-cut) while a locally loud passage
-looks uniformly strong (over-cut), i.e. some parts too rapid, some not
-rapid enough relative to their own dynamics. Tune with `--section-variation`
-(0 = only accents cut, maximum variation; 1 = uniform, every single note/hit
-cuts; default 0.35) and, separately, `--drum-variation` for just the
-`--drum-buildup` ranges (defaults to `--section-variation`'s value).
+Cut selection inside these ranges is **deterministic**: a note/hit gets a
+cut if and only if its strength is at least `1 - variation` of the loudest
+onset within 2 seconds of it, so the same musical phrase always produces
+the same cut pattern and every accent reliably cuts. (An earlier version
+used a strength-weighted coin flip per note; that meant a repeated riff cut
+differently on each repetition and accents sometimes didn't cut at all —
+individually beat-aligned but rhythmically arbitrary.) The comparison is
+local, not against the whole range's single loudest peak, so a quiet
+passage's own accents still cut. A max-gap rule additionally guarantees no
+stretch inside a range goes more than ~2 beats without a cut (the strongest
+skipped note in an oversized gap is promoted). `--seed` affects only which
+clips fill the segments, never cut timing.
+
+Tune with `--section-variation` (0 = only exact local peaks cut; 1 = every
+single note cuts; default 0.35) and, separately, `--drum-variation` for the
+`--drum-buildup` ranges (1 = cut on every drum hit — the fastest; defaults
+to `--section-variation`'s value).
 
 Melodic notes are detected from the harmonic stream's RMS (loudness) rise,
 not spectral flux — checked visually against a real reference edit (plotting
@@ -118,7 +143,7 @@ over-triggering.
 | `--drum-buildup` | — | `START:END` range to cut on every drum hit (repeatable) |
 | `--auto-chorus` | off | auto-detect the chorus/build-up instead of specifying ranges |
 | `--section-variation` | 0.35 | pacing variation within `--chorus` ranges (0=accents only, 1=uniform) |
-| `--drum-variation` | (same as above) | pacing variation within `--drum-buildup` ranges specifically |
+| `--drum-variation` | (same as above) | pacing within `--drum-buildup` ranges (1 = cut every drum hit, fastest) |
 | `--seed` | — | reproducible clip selection |
 | `--source-margin` | 0.5 | seconds skipped at each clip's start/end |
 | `--no-repeat-window` | 3 | recent clips excluded from reuse |
