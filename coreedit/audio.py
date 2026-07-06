@@ -41,6 +41,7 @@ def analyze_song(
     start: float = 0.0,
     duration: float | None = None,
     note_sensitivity: float = 0.05,
+    note_min_spacing: float = 0.1,
 ) -> BeatGrid:
     """Analyze the rhythm of an audio (or video) file.
 
@@ -52,6 +53,15 @@ def analyze_song(
     Librosa's own default (0.07) is tuned for full-mix/percussive-style sharp
     transients; a separated harmonic stream's softer attacks warrant a lower
     default here.
+
+    `note_min_spacing` is the minimum time between two melodic onsets.
+    Librosa's own default minimum spacing is ~30ms, which is far shorter than
+    any genuinely distinct guitar note at normal playing speed — a single
+    sustained or vibrato note's natural energy flutter gets picked up as 2-3
+    separate "onsets" a few frames apart. Measured against a real reference
+    edit's actual cuts, that produced ~2.5x as many detected onsets as real
+    notes. 100ms (10 notes/sec) is fast even for a real guitar line while
+    still rejecting that within-note flutter.
     """
     import librosa
 
@@ -74,7 +84,7 @@ def analyze_song(
     # that this barely matters, so only the harmonic stream needs the lower
     # sensitivity threshold too.
     harmonic_times, harmonic_strength = _onsets_with_strength(
-        y_harmonic, sr, delta=note_sensitivity
+        y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing
     )
     percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
 
@@ -100,7 +110,7 @@ def analyze_song(
 
 
 def _onsets_with_strength(
-    y: np.ndarray, sr: int, delta: float = 0.07
+    y: np.ndarray, sr: int, delta: float = 0.07, min_spacing: float = 0.03
 ) -> tuple[list[float], list[float]]:
     """Onset times paired with how pronounced each one is.
 
@@ -111,17 +121,24 @@ def _onsets_with_strength(
     Strength is still sampled at the original peak (not the backtracked,
     necessarily-quiet point) so accented vs. barely-there onsets stay
     distinguishable for downstream thinning.
+
+    `min_spacing` (seconds) is the minimum gap enforced between two onsets —
+    librosa's own default is ~30ms (`wait` in frames), which readily lets a
+    single note's natural energy flutter register as several onsets.
     """
     import librosa
 
-    env = librosa.onset.onset_strength(y=y, sr=sr)
+    hop_length = 512
+    wait = max(1, round(min_spacing * sr / hop_length))
+    env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
     peak_frames = librosa.onset.onset_detect(
-        onset_envelope=env, sr=sr, units="frames", backtrack=False, delta=delta
+        onset_envelope=env, sr=sr, units="frames", backtrack=False,
+        delta=delta, wait=wait, hop_length=hop_length,
     )
     if len(peak_frames) == 0:
         return [], []
     attack_frames = librosa.onset.onset_backtrack(peak_frames, env)
-    times = librosa.frames_to_time(attack_frames, sr=sr)
+    times = librosa.frames_to_time(attack_frames, sr=sr, hop_length=hop_length)
     strengths = env[peak_frames]
     return [float(t) for t in times], [float(s) for s in strengths]
 

@@ -49,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="how easily a melodic note counts as an onset for --chorus/--auto-chorus "
                         "(lower = catches more/quieter notes but risks false triggers on sustain "
                         "or vibrato; default 0.05, librosa's own full-mix default is 0.07)")
+    p.add_argument("--note-min-spacing", type=float, default=0.1, dest="note_min_spacing",
+                   help="minimum seconds between two detected melodic notes (lower allows faster "
+                        "playing to register as separate notes, but risks a single sustained/"
+                        "vibrato note being split into several false ones; default 0.1)")
     p.add_argument("--section-variation", type=float, default=0.35, dest="section_variation",
                    help="within --chorus/--drum-buildup/--auto-chorus ranges, how much accented "
                         "notes/hits are favored over quiet ones (0 = only accents get their own "
@@ -137,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     print("analyzing song rhythm...")
     grid = audio.analyze_song(
         args.song, start=args.song_start, duration=args.duration,
-        note_sensitivity=args.note_sensitivity,
+        note_sensitivity=args.note_sensitivity, note_min_spacing=args.note_min_spacing,
     )
     duration = min(args.duration, grid.duration)
     print(f"  bpm={grid.bpm:.1f}  beats={len(grid.beat_times)}  onsets={len(grid.onset_times)}")

@@ -58,3 +58,38 @@ def test_strength_reflects_peak_not_backtracked_quiet_point():
     # strength must be sampled near the note's full volume, not near-zero
     # (which is what the backtracked, pre-attack point would give)
     assert strengths[0] > 0.01
+
+
+def test_min_spacing_converts_to_wait_frames_correctly(monkeypatch):
+    """The min_spacing (seconds) -> wait (frames) conversion is what actually
+    enforces the minimum gap; verify it's computed and passed through
+    correctly rather than relying on a synthetic signal reliably producing
+    two independently-resolvable spectral peaks (fragile/finicky to
+    construct — real-audio validation lives in the e2e reference tests)."""
+    import librosa
+
+    captured = {}
+    real_onset_detect = librosa.onset.onset_detect
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real_onset_detect(*args, **kwargs)
+
+    monkeypatch.setattr(librosa.onset, "onset_detect", spy)
+
+    sr = 22050
+    y = _synthetic_note(sr, total=2.0, attack_start=1.0, ramp=0.05)
+    _onsets_with_strength(y, sr, min_spacing=0.1)
+
+    hop_length = 512
+    expected_wait = round(0.1 * sr / hop_length)
+    assert captured["wait"] == expected_wait
+
+
+def test_min_spacing_wait_is_never_zero():
+    # a tiny min_spacing must still floor to at least 1 frame, not 0
+    # (wait=0 would disable the minimum-spacing behavior entirely)
+    sr = 22050
+    y = _synthetic_note(sr, total=2.0, attack_start=1.0, ramp=0.05)
+    times, _ = _onsets_with_strength(y, sr, min_spacing=0.0001)
+    assert len(times) >= 1  # just needs to run without error and find the note

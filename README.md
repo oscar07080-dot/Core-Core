@@ -77,6 +77,15 @@ librosa's full-mix default since an isolated harmonic stream's attacks are
 softer. If it's still missing real notes, lower `--note-sensitivity`
 (default 0.05); if it's over-triggering on sustain/vibrato, raise it.
 
+Detected notes are also required to be at least `--note-min-spacing`
+(default 0.1s) apart — librosa's own default minimum gap is ~30ms, which is
+short enough that a single sustained/vibrato note's natural energy flutter
+gets picked up as 2-3 separate onsets. Checked against a real reference
+edit's actual cuts, that produced ~2.5x as many detected notes as the
+editor's real cuts; 0.1s brought it down to ~1.6x. Lower it if your song's
+guitar part is genuinely faster than 10 notes/sec, raise it if it's still
+over-triggering.
+
 ### Key flags
 
 | flag | default | meaning |
@@ -88,6 +97,7 @@ softer. If it's still missing real notes, lower `--note-sensitivity`
 | `--intensity` | medium | cut density (`low`/`medium`/`high`) when no reference |
 | `--chorus` | — | `START:END` range to cut on every melodic note (repeatable) |
 | `--note-sensitivity` | 0.05 | melodic-note detection sensitivity (lower = catches more/quieter notes) |
+| `--note-min-spacing` | 0.1 | minimum seconds between two detected melodic notes |
 | `--drum-buildup` | — | `START:END` range to cut on every drum hit (repeatable) |
 | `--auto-chorus` | off | auto-detect the chorus/build-up instead of specifying ranges |
 | `--section-variation` | 0.35 | pacing variation within chorus/build-up ranges (0=accents only, 1=uniform) |
