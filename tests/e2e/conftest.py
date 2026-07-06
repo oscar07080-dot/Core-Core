@@ -35,6 +35,33 @@ def click_song(media_dir):
 
 
 @pytest.fixture(scope="session")
+def verse_chorus_song(media_dir):
+    """An 18s song with a clear structure: quiet verse (0-6s, sparse clicks),
+    a loud sustained chorus (6-13s, dense guitar-note-like tones over a
+    driving click track), then a quiet outro (13-18s) — for testing
+    chorus/build-up detection against a real energy contour."""
+    path = str(media_dir / "verse_chorus.wav")
+    # verse: quiet 1kHz clicks every 0.5s
+    verse = "sine=frequency=1000:sample_rate=44100:duration=6,volume='if(lt(mod(t,0.5),0.05),0.3,0)':eval=frame"
+    # chorus: loud clicks every 0.5s (drum-like) mixed with a sustained
+    # 440Hz tone pulsed every 0.25s (guitar-note-like), both full volume
+    chorus_drums = "sine=frequency=1000:sample_rate=44100:duration=7,volume='if(lt(mod(t,0.5),0.05),1,0)':eval=frame"
+    chorus_notes = "sine=frequency=440:sample_rate=44100:duration=7,volume='if(lt(mod(t,0.25),0.08),0.9,0)':eval=frame"
+    outro = "sine=frequency=1000:sample_rate=44100:duration=5,volume='if(lt(mod(t,0.5),0.05),0.3,0)':eval=frame"
+    _ffmpeg(
+        "-f", "lavfi", "-i", verse,
+        "-f", "lavfi", "-i", chorus_drums,
+        "-f", "lavfi", "-i", chorus_notes,
+        "-f", "lavfi", "-i", outro,
+        "-filter_complex",
+        "[1:a][2:a]amix=inputs=2:duration=first[chorus];"
+        "[0:a][chorus][3:a]concat=n=3:v=0:a=1[out]",
+        "-map", "[out]", path,
+    )
+    return path
+
+
+@pytest.fixture(scope="session")
 def sample_clips(media_dir):
     """Three distinct short test videos + one PNG still image."""
     clips_dir = media_dir / "clips"

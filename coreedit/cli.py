@@ -34,6 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="offset into the song to start from (seconds)")
     p.add_argument("--intensity", choices=["low", "medium", "high"], default="medium",
                    help="cut density when no --reference is given")
+    p.add_argument("--auto-chorus", action="store_true", dest="auto_chorus",
+                   help="auto-detect the chorus (sustained high-energy section) and cut on "
+                        "every melodic note there, plus every drum hit in the build-up right "
+                        "before it. Ignored where --chorus/--drum-buildup are given explicitly.")
+    p.add_argument("--chorus", action="append", default=[], metavar="START:END",
+                   help="time range (seconds) to cut on every melodic/guitar note instead of "
+                        "the normal pacing; overrides --auto-chorus (repeatable)")
+    p.add_argument("--drum-buildup", action="append", default=[], dest="drum_buildup",
+                   metavar="START:END",
+                   help="time range (seconds) to cut on every drum hit instead of the normal "
+                        "pacing (repeatable)")
     p.add_argument("--no-repeat-window", type=int, default=3, dest="no_repeat_window",
                    help="how many recent clips to avoid reusing back-to-back")
     p.add_argument("--source-margin", type=float, default=0.5, dest="source_margin",
@@ -56,17 +67,44 @@ def default_output(subject: str) -> str:
     return f"{slug}_{stamp}.mp4"
 
 
+def parse_time_range(spec: str) -> tuple[float, float]:
+    parts = spec.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"expected START:END, got {spec!r}")
+    try:
+        start, end = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise ValueError(f"START/END must be numbers (seconds): {spec!r}") from None
+    if end <= start:
+        raise ValueError(f"END must be greater than START: {spec!r}")
+    if start < 0:
+        raise ValueError(f"START must not be negative: {spec!r}")
+    return start, end
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     from . import acquisition, audio, timeline
     from .ffmpeg_utils import check_binaries
-    from .models import EditSpec
+    from .models import EditSpec, SectionOverride
 
     check_binaries()
 
     if not os.path.isfile(args.song):
         print(f"error: song file not found: {args.song}", file=sys.stderr)
+        return 1
+
+    try:
+        overrides = [
+            SectionOverride(start=s, end=e, kind="harmonic")
+            for s, e in (parse_time_range(spec) for spec in args.chorus)
+        ] + [
+            SectionOverride(start=s, end=e, kind="percussive")
+            for s, e in (parse_time_range(spec) for spec in args.drum_buildup)
+        ]
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     # 1. acquire source clips
@@ -102,6 +140,22 @@ def main(argv: list[str] | None = None) -> int:
         boundaries = timeline.boundaries_from_template(template, grid, duration)
     else:
         boundaries = timeline.boundaries_from_heuristic(grid, duration, args.intensity)
+
+    # 3b. chorus / drum-buildup overrides: explicit ranges win, else auto-detect
+    if not overrides and args.auto_chorus:
+        chorus, buildup = audio.detect_chorus_and_buildup(grid)
+        if chorus:
+            overrides.append(chorus)
+            print(f"auto-detected chorus: {chorus.start:.1f}s-{chorus.end:.1f}s "
+                  "(cutting on every note)")
+        else:
+            print("auto-chorus: no clear chorus section found, using normal pacing")
+        if buildup:
+            overrides.append(buildup)
+            print(f"auto-detected build-up: {buildup.start:.1f}s-{buildup.end:.1f}s "
+                  "(cutting on every drum hit)")
+    if overrides:
+        boundaries = timeline.apply_section_overrides(boundaries, grid, overrides)
     print(f"{len(boundaries) - 1} segments over {duration:.1f}s")
 
     # 4. build the timeline

@@ -40,10 +40,12 @@ class BeatGrid:
 
     bpm: float
     beat_times: list[float]      # seconds, coarse beat grid
-    onset_times: list[float]     # seconds, dense transient grid
+    onset_times: list[float]     # seconds, dense transient grid (full mix)
     energy_times: list[float]    # seconds, sample times of the energy curve
     energy: list[float]          # normalized 0..1 RMS energy at energy_times
     duration: float              # seconds of analyzed audio
+    harmonic_onset_times: list[float] = field(default_factory=list)   # melodic note onsets (guitar, etc.)
+    percussive_onset_times: list[float] = field(default_factory=list)  # drum-hit onsets
 
     @property
     def beat_period(self) -> float:
@@ -74,6 +76,17 @@ class RhythmTemplate:
         """Rescale the template's cut lengths to a new tempo, in seconds."""
         period = 60.0 / bpm if bpm > 0 else 0.5
         return [n * period for n in self.cut_lengths_in_beats]
+
+
+@dataclass
+class SectionOverride:
+    """A time range where cuts should follow a specific onset stream instead
+    of the normal pacing: "harmonic" cuts on every melodic note (e.g. guitar),
+    "percussive" cuts on every drum hit."""
+
+    start: float
+    end: float
+    kind: str  # "harmonic" or "percussive"
 
 
 @dataclass

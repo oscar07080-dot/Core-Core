@@ -14,6 +14,9 @@ def steady_grid() -> BeatGrid:
     n = 200
     times = [i * 0.1 for i in range(n)]
     energy = [i / (n - 1) for i in range(n)]
+    # distinct from beats/onsets so override tests can tell them apart
+    harmonic = [round(i * 0.3 + 0.02, 4) for i in range(67)]
+    percussive = [round(i * 0.15 + 0.01, 4) for i in range(133)]
     return BeatGrid(
         bpm=120.0,
         beat_times=beats,
@@ -21,6 +24,8 @@ def steady_grid() -> BeatGrid:
         energy_times=times,
         energy=energy,
         duration=20.0,
+        harmonic_onset_times=harmonic,
+        percussive_onset_times=percussive,
     )
 
 

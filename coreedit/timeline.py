@@ -6,7 +6,7 @@ import math
 import random
 
 from .audio import snap_to_grid
-from .models import BeatGrid, Clip, RhythmTemplate, Segment
+from .models import BeatGrid, Clip, RhythmTemplate, SectionOverride, Segment
 
 # fraction of segments cut at onset density (vs beat density) per intensity level
 INTENSITY_ENERGY_CUTOFF = {"low": 1.01, "medium": 0.75, "high": 0.5}
@@ -63,6 +63,47 @@ def boundaries_from_heuristic(
     else:
         boundaries[-1] = target_duration
     return boundaries
+
+
+def apply_section_overrides(
+    boundaries: list[float], grid: BeatGrid, overrides: list[SectionOverride]
+) -> list[float]:
+    """Within each override's time range, replace the normal cut boundaries
+    with the grid's per-note ("harmonic") or per-hit ("percussive") onsets.
+
+    Boundaries outside every override range are left untouched.
+    """
+    if not overrides:
+        return boundaries
+    target_duration = boundaries[-1]
+
+    clipped = [
+        SectionOverride(start=max(0.0, o.start), end=min(o.end, target_duration), kind=o.kind)
+        for o in overrides
+        if o.start < target_duration and o.end > 0
+    ]
+    if not clipped:
+        return boundaries
+
+    points = {b for b in boundaries if not any(o.start < b < o.end for o in clipped)}
+    for o in clipped:
+        source = grid.harmonic_onset_times if o.kind == "harmonic" else grid.percussive_onset_times
+        points.update(t for t in source if o.start <= t <= o.end)
+        points.add(o.start)
+        points.add(o.end)
+    points.add(0.0)
+    points.add(target_duration)
+
+    result = sorted(points)
+    merged = [result[0]]
+    for t in result[1:]:
+        if t - merged[-1] >= MIN_SEGMENT:
+            merged.append(t)
+    if merged[-1] < target_duration - 1e-9:
+        merged.append(target_duration)
+    else:
+        merged[-1] = target_duration
+    return merged
 
 
 def build_timeline(
