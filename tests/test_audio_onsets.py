@@ -1,6 +1,7 @@
 import numpy as np
+import pytest
 
-from coreedit.audio import _onsets_with_strength, _rms_feature
+from coreedit.audio import _merge_onsets, _normalize_strengths, _onsets_with_strength, _rms_feature
 
 
 def _synthetic_note(sr: int, total: float, attack_start: float, ramp: float, freq: float = 440.0):
@@ -135,3 +136,61 @@ def test_rms_feature_ignores_pure_timbre_change_at_constant_loudness():
     near_switch_flux = [t for t in flux_times if 1.3 <= t <= 1.7]
     assert near_switch_rms == []
     assert len(near_switch_flux) >= 1
+
+
+# --- merging two onset detectors: neither alone is reliable ---
+
+
+def test_normalize_strengths_scales_to_own_max():
+    assert _normalize_strengths([2.0, 4.0, 8.0]) == [0.25, 0.5, 1.0]
+
+
+def test_normalize_strengths_empty_and_zero():
+    assert _normalize_strengths([]) == []
+    assert _normalize_strengths([0.0, 0.0]) == [0.0, 0.0]
+
+
+def test_merge_onsets_unions_non_overlapping_detections():
+    times, strengths = _merge_onsets([1.0, 3.0], [1.0, 0.5], [2.0, 4.0], [1.0, 0.5])
+    assert times == [1.0, 2.0, 3.0, 4.0]
+    assert len(strengths) == 4
+
+
+def test_merge_onsets_recovers_a_swell_one_detector_missed_entirely():
+    """The exact real-world bug: detector A has a complete blind spot at a
+    real swell that detector B catches -- the merge must still include it."""
+    a_times, a_strengths = [1.0, 3.0], [1.0, 1.0]  # misses the swell at 2.0 entirely
+    b_times, b_strengths = [1.05, 2.0, 3.0], [0.9, 1.0, 0.9]
+    times, _ = _merge_onsets(a_times, a_strengths, b_times, b_strengths)
+    assert 2.0 in times
+
+
+def test_merge_onsets_deduplicates_close_detections_keeping_stronger():
+    # both detectors find the same real note ~20ms apart -- must merge to
+    # one. A second onset in each list gives normalization something
+    # meaningful to scale against (a lone onset always normalizes to 1.0).
+    a_times, a_strengths = [1.0, 5.0], [0.2, 1.0]
+    b_times, b_strengths = [1.02, 5.0], [0.9, 1.0]
+    times, strengths = _merge_onsets(a_times, a_strengths, b_times, b_strengths)
+    assert len([t for t in times if t < 2.0]) == 1
+    idx = next(i for i, t in enumerate(times) if t < 2.0)
+    assert strengths[idx] == pytest.approx(0.9)
+
+
+def test_merge_onsets_normalizes_before_comparing():
+    """A detector reporting small raw numbers (e.g. librosa's RMS-derivative
+    units) must not be treated as universally 'weaker' than one reporting
+    numbers in 0..1 (madmom's CNN activation) just because of scale."""
+    # detector A: raw strengths in a tiny arbitrary scale
+    # detector B: raw strengths already 0..1
+    times, strengths = _merge_onsets([1.0], [0.001], [1.0], [0.0005])
+    # after normalizing each to its own max, both onsets are "the loudest in
+    # their own detector" (normalized to 1.0) and should merge into one kept
+    # onset at full relative strength, not be judged by raw magnitude
+    assert len(times) == 1
+    assert strengths[0] == pytest.approx(1.0)
+
+
+def test_merge_onsets_empty_inputs():
+    assert _merge_onsets([], [], [], []) == ([], [])
+    assert _merge_onsets([1.0], [1.0], [], []) == ([1.0], [1.0])

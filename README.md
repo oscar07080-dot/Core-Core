@@ -15,12 +15,17 @@ pip install -r requirements.txt
 ### Optional: madmom (recommended for noticeably better cut timing)
 
 When [madmom](https://github.com/CPJKU/madmom) is importable, its neural
-beat tracker and CNN onset detector replace the librosa heuristics for all
-rhythm analysis — audited against a real song's waveform, its onsets land
-at the base of nearly every real swell, including subtle attacks the
-heuristics miss. The tool applies the needed Python 3.10+/numpy 2
-compatibility shims automatically at import, so the old 0.16.1 release
-works unpatched. Installing it is the only fiddly part:
+beat tracker and CNN onset detector are used for beat tracking, drum-hit
+onsets, and as one of two detectors merged for melodic (guitar-like)
+onsets. Neither detector alone is reliable: audited directly against a real
+song's waveform, madmom's CNN had a complete blind spot for the three
+loudest, most obvious swells in one section (no onset at all), which
+librosa's simpler RMS-derivative detector caught; librosa in turn misses
+subtler attacks madmom catches elsewhere. The two are merged (normalized to
+a comparable scale, deduplicated where they agree) so melodic cuts catch
+what either one alone misses. The tool applies the needed Python 3.10+/
+numpy 2 compatibility shims automatically at import, so the old 0.16.1
+release works unpatched. Installing it is the only fiddly part:
 
 ```bash
 pip install cython

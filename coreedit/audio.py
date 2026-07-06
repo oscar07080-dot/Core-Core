@@ -67,6 +67,49 @@ def _madmom_onsets(y: np.ndarray, sr: int, min_spacing: float) -> tuple[list[flo
     return [float(t) for t in times], strengths
 
 
+def _normalize_strengths(strengths: list[float]) -> list[float]:
+    """Scale a strength list to 0..1 by its own max, so onset strengths from
+    different detectors (madmom's 0..1 CNN activation vs librosa's arbitrary
+    RMS-derivative units) become comparable before merging."""
+    peak = max(strengths) if strengths else 0.0
+    return [s / peak for s in strengths] if peak > 0 else list(strengths)
+
+
+def _merge_onsets(
+    times_a: list[float], strengths_a: list[float],
+    times_b: list[float], strengths_b: list[float],
+    tolerance: float = 0.05,
+) -> tuple[list[float], list[float]]:
+    """Union two onset detections, normalizing each to its own 0..1 scale
+    first and treating detections within `tolerance` seconds as the same
+    onset (keeping the higher of the two normalized strengths).
+
+    Different onset detectors miss different real notes -- checked directly
+    against a real song's waveform, madmom's CNN onset detector had a
+    complete blind spot exactly where the two loudest, most obvious swells
+    in one section were (missed entirely, no onset at all), while librosa's
+    simpler RMS-derivative approach caught both; librosa in turn misses
+    subtler attacks madmom catches elsewhere. Combining catches what either
+    one alone misses.
+    """
+    a = _normalize_strengths(strengths_a)
+    b = _normalize_strengths(strengths_b)
+    combined = sorted(zip(times_a, a)) + sorted(zip(times_b, b))
+    combined.sort(key=lambda pair: pair[0])
+
+    merged_times: list[float] = []
+    merged_strengths: list[float] = []
+    for t, s in combined:
+        if merged_times and t - merged_times[-1] <= tolerance:
+            if s > merged_strengths[-1]:
+                merged_times[-1] = t
+                merged_strengths[-1] = s
+        else:
+            merged_times.append(t)
+            merged_strengths.append(s)
+    return merged_times, merged_strengths
+
+
 def _madmom_beats(y: np.ndarray, sr: int) -> tuple[list[float], float]:
     """Neural beat tracking (RNN + DBN): beat times plus derived BPM."""
     from madmom.audio.signal import Signal
@@ -117,15 +160,18 @@ def analyze_song(
     Times in the returned BeatGrid are relative to `start`, i.e. they map
     directly onto the output edit's timeline.
 
-    When madmom is installed it is used for beat tracking and all onset
-    detection (neural detectors, clearly more accurate — see _madmom());
-    otherwise the librosa-based heuristics below are the fallback.
+    When madmom is installed it's used for beat tracking, percussive onsets,
+    and as one of two detectors merged for melodic (harmonic) onsets — its
+    CNN detector is generally more accurate than librosa's heuristics, but
+    checked directly against a real song's waveform it had a complete blind
+    spot for two of the loudest swells in one section, which librosa's
+    RMS-derivative approach caught; see _merge_onsets. Without madmom,
+    librosa's detector is used alone.
 
-    `note_sensitivity` is the peak-picking threshold for melodic (guitar-like)
-    onsets in the librosa fallback — lower catches more/quieter notes, higher
-    misses more of them. Tuned for the RMS-derivative novelty curve used for
-    the harmonic stream (see `_onsets_with_strength`); the madmom path uses
-    the CNN's own calibrated threshold instead and ignores this.
+    `note_sensitivity` is the peak-picking threshold for the librosa melodic
+    (guitar-like) onset detector — lower catches more/quieter notes, higher
+    misses more of them. Tuned for its RMS-derivative novelty curve (see
+    `_onsets_with_strength`).
 
     `note_min_spacing` is the minimum time between two melodic onsets.
     Librosa's own default minimum spacing is ~30ms, which is far shorter than
@@ -147,17 +193,37 @@ def analyze_song(
     # (drum hits) components so cuts can follow one or the other on request
     y_harmonic, y_percussive = librosa.effects.hpss(y)
 
+    # Guitar/melodic "onsets" are cut points meant to land on a strum's
+    # loudness swell. This RMS-derivative novelty curve (attack = where
+    # loudness is actually rising) tracks that far better than spectral flux,
+    # which responds to timbre change, not loudness -- checked visually
+    # against a real reference edit's audio and roughly half of spectral
+    # flux's detections landed in flat/declining regions with no audible
+    # swell nearby.
+    librosa_harmonic_times, librosa_harmonic_strength = _onsets_with_strength(
+        y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing,
+        feature=_rms_feature,
+    )
+
     if _madmom():
-        # Preferred backend: madmom's neural detectors. Audited against the
-        # real reference song's waveform, its CNN onsets sit at the base of
-        # nearly every rising swell on the separated stems -- including
-        # subtle attacks the librosa-based heuristics below miss -- and its
-        # RNN+DBN beat tracking is far more stable than librosa's. Optional
-        # because installing madmom is nontrivial (see README).
+        # madmom's neural CNN onset detector and RNN+DBN beat tracker are
+        # generally more accurate than the librosa heuristics -- but checked
+        # directly against a real song's waveform, its CNN missed two of the
+        # loudest, most obvious swells in one section entirely (no onset at
+        # all), which librosa's RMS-derivative approach caught. Neither
+        # detector alone is reliable; merge both so each catches what the
+        # other misses (see _merge_onsets). Percussive (drum) hits are sharp,
+        # unambiguous transients where this blind-spot risk hasn't shown up,
+        # so that stream stays madmom-only. Optional because installing
+        # madmom is nontrivial (see README).
         beat_times, bpm = _madmom_beats(y, sr)
         onset_times, _ = _madmom_onsets(y, sr, min_spacing=0.03)
-        harmonic_times, harmonic_strength = _madmom_onsets(
+        madmom_harmonic_times, madmom_harmonic_strength = _madmom_onsets(
             y_harmonic, sr, min_spacing=note_min_spacing
+        )
+        harmonic_times, harmonic_strength = _merge_onsets(
+            madmom_harmonic_times, madmom_harmonic_strength,
+            librosa_harmonic_times, librosa_harmonic_strength,
         )
         percussive_times, percussive_strength = _madmom_onsets(
             y_percussive, sr, min_spacing=0.03
@@ -171,20 +237,7 @@ def analyze_song(
             onset_envelope=onset_env, sr=sr, units="time", backtrack=False
         )
         onset_times = [float(t) for t in onset_times]
-        # Guitar/melodic "onsets" are cut points meant to land on a strum's
-        # loudness swell. Standard spectral-flux novelty responds to *timbre*
-        # change, not loudness -- checked visually against a real reference
-        # edit's audio (waveform + detected onsets, zoomed to sub-second
-        # windows) and roughly half the detected onsets landed in flat/declining
-        # regions with no audible swell nearby. An RMS-derivative novelty curve
-        # (attack = where loudness is actually rising) tracked the real swells
-        # far more closely in the same check. Percussive (drum) hits are already
-        # sharp transients where plain spectral flux works fine, so only the
-        # harmonic stream switches feature.
-        harmonic_times, harmonic_strength = _onsets_with_strength(
-            y_harmonic, sr, delta=note_sensitivity, min_spacing=note_min_spacing,
-            feature=_rms_feature,
-        )
+        harmonic_times, harmonic_strength = librosa_harmonic_times, librosa_harmonic_strength
         percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
 
     rms = librosa.feature.rms(y=y)[0]
