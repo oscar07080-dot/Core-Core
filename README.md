@@ -58,7 +58,27 @@ python edit.py --song song.mp3 --clips-dir ./clips --dry-run
 # cut on every guitar note through the chorus, every drum hit right before it
 python edit.py --song song.mp3 --clips-dir ./clips --auto-chorus
 python edit.py --song song.mp3 --clips-dir ./clips --chorus 45:60 --drum-buildup 40:45
+
+# export as numbered clips instead of one rendered mp4 (see below)
+python edit.py --song song.mp3 --clips-dir ./clips --export-clips ./for_capcut
 ```
+
+### Editing the result yourself (e.g. in CapCut)
+
+`--export-clips DIR` writes each segment as its own numbered file
+(`001.mp4`, `002.mp4`, ...) plus the trimmed song audio (`song.m4a`) into
+`DIR`, instead of rendering one mp4. Drag the numbered clips into a
+timeline in order, add `song.m4a` as the audio track, then use your
+editor's **"replace clip"** feature on each one to swap in your own footage
+— it keeps the same trim/duration, so the cut timing survives untouched.
+
+This is deliberately not a native CapCut project file: CapCut has no
+documented format or API, everything that exists is reverse-engineered and
+version-fragile (and newer versions reportedly obfuscate the draft file
+entirely), and it's desktop-only regardless — mobile drafts live in the
+app's private sandbox with no normal import path. The "replace clip"
+workflow above works identically on every CapCut version and platform,
+and in any other NLE that supports replacing a clip in place.
 
 ### URL list format (`urls.txt`)
 

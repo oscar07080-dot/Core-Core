@@ -101,3 +101,62 @@ def render(segments: list[Segment], spec: EditSpec, verbose: bool = False) -> No
         run_ffmpeg(args, verbose=verbose)
     finally:
         os.unlink(graph_path)
+
+
+def render_clip_sequence(
+    segments: list[Segment], spec: EditSpec, output_dir: str, verbose: bool = False
+) -> list[str]:
+    """Export each segment as its own numbered clip, plus the trimmed song
+    audio, instead of one rendered mp4.
+
+    For reassembling the exact same cut timing in an external editor (e.g.
+    CapCut) with your own footage: drag the numbered clips into a timeline
+    in order, add the song as the audio track, then use that editor's
+    "replace clip" feature on each one to swap in your own video without
+    touching its trim/duration. This sidesteps CapCut's project-file format
+    entirely (undocumented, reverse-engineered, and version-fragile) by
+    working through an ordinary "replace this clip" workflow every version
+    supports.
+
+    Returns the list of clip file paths written (song excluded).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    scale = (
+        f"scale={spec.width}:{spec.height}:force_original_aspect_ratio=increase,"
+        f"crop={spec.width}:{spec.height},setsar=1,fps={spec.fps},format=yuv420p"
+    )
+    digits = max(3, len(str(len(segments))))
+
+    clip_paths = []
+    for n, seg in enumerate(segments, start=1):
+        out_path = os.path.join(output_dir, f"{n:0{digits}d}.mp4")
+        if seg.clip.is_image:
+            args = [
+                "-loop", "1", "-t", f"{seg.duration:.4f}", "-i", seg.clip.path,
+                "-filter:v", scale,
+            ]
+        else:
+            args = [
+                "-i", seg.clip.path,
+                "-filter:v",
+                f"trim=start={seg.in_point:.4f}:end={seg.out_point:.4f},"
+                f"setpts=PTS-STARTPTS,{scale}",
+            ]
+        args += [
+            "-an",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-r", str(spec.fps),
+            out_path,
+        ]
+        run_ffmpeg(args, verbose=verbose)
+        clip_paths.append(out_path)
+
+    song_path = os.path.join(output_dir, "song.m4a")
+    run_ffmpeg([
+        "-ss", f"{spec.song_start:.3f}", "-i", spec.song,
+        "-t", f"{spec.duration:.3f}",
+        "-vn", "-c:a", "aac", "-b:a", "192k",
+        song_path,
+    ], verbose=verbose)
+
+    return clip_paths

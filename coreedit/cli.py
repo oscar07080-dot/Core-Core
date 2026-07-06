@@ -74,6 +74,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="where URL downloads are cached (default ./cache)")
     p.add_argument("--dry-run", action="store_true",
                    help="print the computed cut list and exit without rendering")
+    p.add_argument("--export-clips", metavar="DIR", dest="export_clips",
+                   help="instead of one rendered mp4, export each segment as its own "
+                        "numbered clip (001.mp4, 002.mp4, ...) plus the trimmed song audio "
+                        "(song.m4a) into DIR. For reassembling the exact same cut timing in "
+                        "an external editor (e.g. CapCut): drag the numbered clips into a "
+                        "timeline in order, add song.m4a as the audio track, then use that "
+                        "editor's 'replace clip' feature on each one to swap in your own "
+                        "footage without disturbing the timing")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -223,6 +231,17 @@ def main(argv: list[str] | None = None) -> int:
         clips=clips,
     )
     from . import render as render_mod
+
+    if args.export_clips:
+        print(f"exporting {len(segments)} numbered clips + song audio -> {args.export_clips}")
+        render_mod.render_clip_sequence(segments, spec, args.export_clips, verbose=args.verbose)
+        print(
+            f"done: {args.export_clips}\n"
+            "Drag the numbered clips into a timeline in order, add song.m4a as the audio "
+            "track, then use your editor's 'replace clip' feature on each one to swap in "
+            "your own footage -- the timing stays exactly as computed."
+        )
+        return 0
 
     print(f"rendering {len(segments)} segments -> {output}")
     render_mod.render(segments, spec, verbose=args.verbose)
