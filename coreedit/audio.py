@@ -62,14 +62,8 @@ def analyze_song(
     # split into melodic (guitar/vocal-like sustained tones) vs percussive
     # (drum hits) components so cuts can follow one or the other on request
     y_harmonic, y_percussive = librosa.effects.hpss(y)
-    harmonic_onset_times = librosa.onset.onset_detect(
-        onset_envelope=librosa.onset.onset_strength(y=y_harmonic, sr=sr),
-        sr=sr, units="time", backtrack=False,
-    )
-    percussive_onset_times = librosa.onset.onset_detect(
-        onset_envelope=librosa.onset.onset_strength(y=y_percussive, sr=sr),
-        sr=sr, units="time", backtrack=False,
-    )
+    harmonic_times, harmonic_strength = _onsets_with_strength(y_harmonic, sr)
+    percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
 
     rms = librosa.feature.rms(y=y)[0]
     peak = float(rms.max()) if rms.size else 0.0
@@ -85,9 +79,24 @@ def analyze_song(
         energy_times=energy_times,
         energy=energy,
         duration=total,
-        harmonic_onset_times=[float(t) for t in harmonic_onset_times],
-        percussive_onset_times=[float(t) for t in percussive_onset_times],
+        harmonic_onset_times=harmonic_times,
+        percussive_onset_times=percussive_times,
+        harmonic_onset_strength=harmonic_strength,
+        percussive_onset_strength=percussive_strength,
     )
+
+
+def _onsets_with_strength(y: np.ndarray, sr: int) -> tuple[list[float], list[float]]:
+    """Onset times paired with how pronounced each one is (the onset-strength
+    envelope's value at that frame) — lets callers tell an accented note/hit
+    apart from a barely-there one instead of treating every onset equally."""
+    import librosa
+
+    env = librosa.onset.onset_strength(y=y, sr=sr)
+    frames = librosa.onset.onset_detect(onset_envelope=env, sr=sr, units="frames", backtrack=False)
+    times = librosa.frames_to_time(frames, sr=sr)
+    strengths = env[frames] if len(frames) else np.array([])
+    return [float(t) for t in times], [float(s) for s in strengths]
 
 
 def _smooth(values: list[float], window_samples: int) -> list[float]:

@@ -64,6 +64,12 @@ source separation:
   the wrong section (or none), fall back to explicit `--chorus`/`--drum-buildup`
   timestamps, which always take precedence over `--auto-chorus`.
 
+Cuts inside these ranges aren't a metronomically constant rate: each
+note/hit's actual strength decides whether it gets its own cut or merges
+into the previous one, so accented notes reliably cut while quiet ones
+often don't. Tune this with `--section-variation` (0 = only accents cut,
+maximum variation; 1 = uniform, every single note/hit cuts; default 0.35).
+
 ### Key flags
 
 | flag | default | meaning |
@@ -76,6 +82,7 @@ source separation:
 | `--chorus` | — | `START:END` range to cut on every melodic note (repeatable) |
 | `--drum-buildup` | — | `START:END` range to cut on every drum hit (repeatable) |
 | `--auto-chorus` | off | auto-detect the chorus/build-up instead of specifying ranges |
+| `--section-variation` | 0.35 | pacing variation within chorus/build-up ranges (0=accents only, 1=uniform) |
 | `--seed` | — | reproducible clip selection |
 | `--source-margin` | 0.5 | seconds skipped at each clip's start/end |
 | `--no-repeat-window` | 3 | recent clips excluded from reuse |

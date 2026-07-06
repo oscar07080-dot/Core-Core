@@ -65,11 +65,46 @@ def boundaries_from_heuristic(
     return boundaries
 
 
+def thin_onsets_by_strength(
+    times: list[float],
+    strengths: list[float],
+    rng: random.Random,
+    min_keep_prob: float = 0.35,
+) -> list[float]:
+    """Keep onsets with probability scaled by how pronounced each one is, so
+    accented notes/hits reliably get their own cut while quieter ones often
+    merge into the previous segment. Without this, cutting on "every onset"
+    is a metronomically constant rate; this gives it real musical texture.
+
+    `min_keep_prob` is the keep-probability floor for the weakest onset
+    (1.0 = keep everything, uniform; lower = more variation). If no strength
+    data is available (mismatched/empty `strengths`), every onset is treated
+    as equally strong and always kept.
+    """
+    if not times:
+        return []
+    if len(strengths) != len(times):
+        strengths = [1.0] * len(times)
+    peak = max(strengths) if strengths else 0.0
+    kept = [times[0]]  # always keep the first onset in range
+    for t, s in zip(times[1:], strengths[1:]):
+        rel = (s / peak) if peak > 0 else 1.0
+        keep_prob = min_keep_prob + (1 - min_keep_prob) * rel
+        if rng.random() < keep_prob:
+            kept.append(t)
+    return kept
+
+
 def apply_section_overrides(
-    boundaries: list[float], grid: BeatGrid, overrides: list[SectionOverride]
+    boundaries: list[float],
+    grid: BeatGrid,
+    overrides: list[SectionOverride],
+    seed: int | None = None,
+    min_keep_prob: float = 0.35,
 ) -> list[float]:
     """Within each override's time range, replace the normal cut boundaries
-    with the grid's per-note ("harmonic") or per-hit ("percussive") onsets.
+    with the grid's per-note ("harmonic") or per-hit ("percussive") onsets,
+    thinned by onset strength so the pacing isn't a constant, metronomic rate.
 
     Boundaries outside every override range are left untouched.
     """
@@ -85,10 +120,19 @@ def apply_section_overrides(
     if not clipped:
         return boundaries
 
+    rng = random.Random(seed)
     points = {b for b in boundaries if not any(o.start < b < o.end for o in clipped)}
     for o in clipped:
-        source = grid.harmonic_onset_times if o.kind == "harmonic" else grid.percussive_onset_times
-        points.update(t for t in source if o.start <= t <= o.end)
+        if o.kind == "harmonic":
+            times, strengths = grid.harmonic_onset_times, grid.harmonic_onset_strength
+        else:
+            times, strengths = grid.percussive_onset_times, grid.percussive_onset_strength
+        if len(strengths) != len(times):
+            strengths = [1.0] * len(times)
+        in_range = [(t, s) for t, s in zip(times, strengths) if o.start <= t <= o.end]
+        range_times = [t for t, _ in in_range]
+        range_strengths = [s for _, s in in_range]
+        points.update(thin_onsets_by_strength(range_times, range_strengths, rng, min_keep_prob))
         points.add(o.start)
         points.add(o.end)
     points.add(0.0)

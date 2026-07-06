@@ -46,6 +46,8 @@ class BeatGrid:
     duration: float              # seconds of analyzed audio
     harmonic_onset_times: list[float] = field(default_factory=list)   # melodic note onsets (guitar, etc.)
     percussive_onset_times: list[float] = field(default_factory=list)  # drum-hit onsets
+    harmonic_onset_strength: list[float] = field(default_factory=list)   # how pronounced each harmonic_onset_times entry is
+    percussive_onset_strength: list[float] = field(default_factory=list)  # how pronounced each percussive_onset_times entry is
 
     @property
     def beat_period(self) -> float:

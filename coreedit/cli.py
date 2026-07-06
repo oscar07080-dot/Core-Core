@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
                    metavar="START:END",
                    help="time range (seconds) to cut on every drum hit instead of the normal "
                         "pacing (repeatable)")
+    p.add_argument("--section-variation", type=float, default=0.35, dest="section_variation",
+                   help="within --chorus/--drum-buildup/--auto-chorus ranges, how much accented "
+                        "notes/hits are favored over quiet ones (0 = only accents get their own "
+                        "cut, weak ones merge into the previous shot; 1 = uniform, every single "
+                        "note/hit cuts regardless of accent; default 0.35)")
     p.add_argument("--no-repeat-window", type=int, default=3, dest="no_repeat_window",
                    help="how many recent clips to avoid reusing back-to-back")
     p.add_argument("--source-margin", type=float, default=0.5, dest="source_margin",
@@ -155,7 +160,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"auto-detected build-up: {buildup.start:.1f}s-{buildup.end:.1f}s "
                   "(cutting on every drum hit)")
     if overrides:
-        boundaries = timeline.apply_section_overrides(boundaries, grid, overrides)
+        boundaries = timeline.apply_section_overrides(
+            boundaries, grid, overrides, seed=args.seed, min_keep_prob=args.section_variation
+        )
     print(f"{len(boundaries) - 1} segments over {duration:.1f}s")
 
     # 4. build the timeline
