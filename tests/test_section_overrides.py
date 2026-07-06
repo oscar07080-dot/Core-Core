@@ -101,7 +101,10 @@ def test_select_zero_strength_never_kept_at_variation_zero():
     times = [1.0, 2.0, 3.0, 4.0]
     strengths = [5.0, 0.0, 5.0, 0.0]  # bimodal: accented / silent
     kept = select_accent_onsets(times, strengths, variation=0.0)
-    assert kept == [1.0, 3.0]
+    # 2.0 (strength 0) is the launch note of the rise into the 3.0 peak, so
+    # it's force-kept by the rising-run rule despite failing the plain
+    # threshold on its own; 4.0 has no follow-on rise, so it's dropped
+    assert kept == [1.0, 2.0, 3.0]
 
 
 def test_select_variation_one_keeps_everything_regardless_of_strength():
@@ -123,16 +126,21 @@ def test_select_repeated_riff_cuts_identically_each_repetition():
     """The core 'in tune' property the probabilistic version lacked: the same
     musical phrase must produce the same cut pattern every time it repeats."""
     riff_strengths = [5.0, 0.5, 2.0, 0.5]  # one bar: accent, weak, medium, weak
-    times = [i * 0.25 for i in range(16)]  # four repetitions of the bar
-    strengths = riff_strengths * 4
+    # one extra trailing bar so every *compared* repetition has a following
+    # note to potentially rise into; the true final note in the sequence has
+    # no "next" note by definition and is excluded from the comparison below
+    n_bars = 5
+    times = [i * 0.25 for i in range(4 * n_bars)]
+    strengths = riff_strengths * n_bars
     kept = select_accent_onsets(times, strengths, variation=0.35, local_window=1.0)
 
     kept_set = set(kept)
     pattern_per_bar = [
         tuple((i * 0.25 + bar * 1.0) in kept_set for i in range(4))
-        for bar in range(4)
+        for bar in range(n_bars - 1)
     ]
-    assert pattern_per_bar[0] == pattern_per_bar[1] == pattern_per_bar[2] == pattern_per_bar[3]
+    assert len(set(pattern_per_bar)) == 1  # every comparable repetition cuts identically
+    assert all(p[0] for p in pattern_per_bar)  # the strong beat always cuts
     # and every bar's accent (the 5.0 note) must cut
     assert all(p[0] for p in pattern_per_bar)
 
@@ -146,17 +154,69 @@ def test_select_lower_variation_thins_more():
 
 
 def test_select_max_gap_promotes_strongest_skipped_onset():
-    # one accent at each end, a long weak stretch in between
-    times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
-    strengths = [10.0, 1.0, 3.0, 1.0, 1.0, 10.0]
+    # a loud peak, a long flat weak stretch, then a rise into a final peak
+    # (the flat middle has no rise of its own, isolating max_gap's effect
+    # from the separate "first note of a rise" rule below)
+    times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+    strengths = [10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0]
     no_fill = select_accent_onsets(times, strengths, variation=0.1, local_window=100.0)
-    assert no_fill == [0.0, 5.0]
-    filled = select_accent_onsets(times, strengths, variation=0.1, local_window=100.0, max_gap=2.0)
-    # the strongest onset inside the oversized gap (2.0s, strength 3.0) gets promoted,
-    # then the remaining sub-gaps are filled the same way until none exceeds max_gap
-    assert 2.0 in filled
+    # index 6 is kept too: it's the first (only) step of the rise into the final peak
+    assert no_fill == [0.0, 6.0, 7.0]
+    filled = select_accent_onsets(
+        times, strengths, variation=0.1, local_window=100.0, max_gap=2.0
+    )
     for a, b in zip(filled, filled[1:]):
         assert b - a <= 2.0 + 1e-9
+
+
+# --- first note of a rising run: fixes missing a phrase's quiet launch point ---
+
+
+def test_select_keeps_quiet_launch_note_of_a_rising_phrase():
+    """A phrase that climbs to a loud peak is typically voiced quietest at
+    its start -- a pure loudness threshold drops exactly the note that
+    marks where the rise begins."""
+    times = [0.0, 0.25, 0.5, 0.75, 1.0]
+    # background beat, then a rise: quiet launch note -> louder -> loud peak
+    strengths = [5.0, 0.3, 2.0, 4.0, 9.0]
+    kept = select_accent_onsets(times, strengths, variation=0.2, local_window=100.0)
+    assert 0.25 in kept  # the quiet launch note, which fails the plain threshold alone
+    without_rule = [
+        t for t, s in zip(times, strengths)
+        if max(strengths) > 0 and s >= 0.8 * max(strengths)
+    ]
+    assert 0.25 not in without_rule  # confirms the threshold alone would have dropped it
+
+
+def test_select_rising_run_only_flags_the_launch_note_not_every_step():
+    times = [0.0, 1.0, 2.0, 3.0, 4.0]
+    strengths = [1.0, 2.0, 3.0, 4.0, 5.0]  # one continuous rise, no plateau
+    kept = select_accent_onsets(times, strengths, variation=0.0, local_window=100.0)
+    # only the launch note (index 0) is force-kept by the rising-run rule;
+    # the peak (index 4) is kept via the ordinary loudness threshold
+    assert kept == [0.0, 4.0]
+
+
+def test_select_purely_decreasing_strengths_has_no_forced_launch_notes():
+    times = [0.0, 1.0, 2.0, 3.0, 4.0]
+    strengths = [9.0, 4.0, 3.0, 2.0, 1.0]
+    kept = select_accent_onsets(times, strengths, variation=0.0, local_window=100.0)
+    assert kept == [0.0]  # only the actual peak, no spurious rise-starts
+
+
+def test_select_repeated_measure_keeps_the_launch_note_every_time():
+    """Mirrors the reported bug: a rising phrase repeats every measure, and
+    its quiet launch note must be kept on every repetition, not just some."""
+    measure = [5.0, 0.4, 2.5, 8.0]  # beat, quiet launch, rising, peak
+    n_measures = 4
+    times = [i * 0.25 for i in range(4 * n_measures)]
+    strengths = measure * n_measures
+
+    kept = select_accent_onsets(times, strengths, variation=0.2, local_window=1.0)
+    kept_set = set(kept)
+    for m in range(n_measures):
+        launch_time = m * 1.0 + 0.25
+        assert launch_time in kept_set, f"measure {m}'s launch note was dropped"
 
 
 def _grid_with_strengths() -> BeatGrid:

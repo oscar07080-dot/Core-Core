@@ -99,8 +99,12 @@ individually beat-aligned but rhythmically arbitrary.) The comparison is
 local, not against the whole range's single loudest peak, so a quiet
 passage's own accents still cut. A max-gap rule additionally guarantees no
 stretch inside a range goes more than ~2 beats without a cut (the strongest
-skipped note in an oversized gap is promoted). `--seed` affects only which
-clips fill the segments, never cut timing.
+skipped note in an oversized gap is promoted). The first note of a rising
+phrase (a step up into a louder follow-on note) is always kept too, even if
+it fails the loudness threshold on its own — a phrase climbing to a peak is
+typically voiced quietest at its launch, so a pure loudness rule otherwise
+drops exactly the note marking where the rise begins. `--seed` affects only
+which clips fill the segments, never cut timing.
 
 Tune with `--section-variation` (0 = only exact local peaks cut; 1 = every
 single note cuts; default 0.35) and, separately, `--drum-variation` for the

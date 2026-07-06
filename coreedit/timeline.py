@@ -124,6 +124,14 @@ def select_accent_onsets(
     promoted (repeatedly, until every gap fits). This bounds "not rapid
     enough" stretches without disturbing accent timing elsewhere.
 
+    The first note of a rising run (a strength increase into a louder
+    follow-on note) is also always kept, even if it fails the loudness
+    threshold on its own. A phrase that climbs to a peak -- e.g. a riff
+    ascending into its loudest note -- is typically voiced quietest at its
+    launch point, so a pure loudness threshold drops exactly the note that
+    marks where the rise begins, which is otherwise a deliberate, musically
+    obvious cut point independent of its own absolute volume.
+
     If strength data is missing/mismatched, every onset is treated as equally
     strong and kept.
     """
@@ -141,6 +149,10 @@ def select_accent_onsets(
         )
         if local_peak <= 0 or s >= threshold * local_peak:
             kept.add(i)
+
+    for i in range(len(strengths) - 1):
+        if strengths[i] < strengths[i + 1] and (i == 0 or strengths[i - 1] >= strengths[i]):
+            kept.add(i)  # first step of a rise -- the phrase's launch point
 
     if max_gap is not None and kept:
         while True:
