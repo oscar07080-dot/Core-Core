@@ -40,11 +40,18 @@ def analyze_song(
     path: str,
     start: float = 0.0,
     duration: float | None = None,
+    note_sensitivity: float = 0.05,
 ) -> BeatGrid:
     """Analyze the rhythm of an audio (or video) file.
 
     Times in the returned BeatGrid are relative to `start`, i.e. they map
     directly onto the output edit's timeline.
+
+    `note_sensitivity` is the peak-picking threshold for melodic (guitar-like)
+    onsets — lower catches more/quieter notes, higher misses more of them.
+    Librosa's own default (0.07) is tuned for full-mix/percussive-style sharp
+    transients; a separated harmonic stream's softer attacks warrant a lower
+    default here.
     """
     import librosa
 
@@ -62,7 +69,13 @@ def analyze_song(
     # split into melodic (guitar/vocal-like sustained tones) vs percussive
     # (drum hits) components so cuts can follow one or the other on request
     y_harmonic, y_percussive = librosa.effects.hpss(y)
-    harmonic_times, harmonic_strength = _onsets_with_strength(y_harmonic, sr)
+    # a plucked/strummed note rings up gradually, so its onset-strength peak
+    # lags well behind the actual attack; a drum hit is already sharp enough
+    # that this barely matters, so only the harmonic stream needs the lower
+    # sensitivity threshold too.
+    harmonic_times, harmonic_strength = _onsets_with_strength(
+        y_harmonic, sr, delta=note_sensitivity
+    )
     percussive_times, percussive_strength = _onsets_with_strength(y_percussive, sr)
 
     rms = librosa.feature.rms(y=y)[0]
@@ -86,16 +99,30 @@ def analyze_song(
     )
 
 
-def _onsets_with_strength(y: np.ndarray, sr: int) -> tuple[list[float], list[float]]:
-    """Onset times paired with how pronounced each one is (the onset-strength
-    envelope's value at that frame) — lets callers tell an accented note/hit
-    apart from a barely-there one instead of treating every onset equally."""
+def _onsets_with_strength(
+    y: np.ndarray, sr: int, delta: float = 0.07
+) -> tuple[list[float], list[float]]:
+    """Onset times paired with how pronounced each one is.
+
+    Peak-picking finds each onset's strongest point, which for a note that
+    rings up gradually (a strum, not a sharp transient) sits noticeably after
+    the actual attack. `onset_backtrack` rolls each detected peak back to the
+    preceding local minimum, which tracks the true attack much more closely.
+    Strength is still sampled at the original peak (not the backtracked,
+    necessarily-quiet point) so accented vs. barely-there onsets stay
+    distinguishable for downstream thinning.
+    """
     import librosa
 
     env = librosa.onset.onset_strength(y=y, sr=sr)
-    frames = librosa.onset.onset_detect(onset_envelope=env, sr=sr, units="frames", backtrack=False)
-    times = librosa.frames_to_time(frames, sr=sr)
-    strengths = env[frames] if len(frames) else np.array([])
+    peak_frames = librosa.onset.onset_detect(
+        onset_envelope=env, sr=sr, units="frames", backtrack=False, delta=delta
+    )
+    if len(peak_frames) == 0:
+        return [], []
+    attack_frames = librosa.onset.onset_backtrack(peak_frames, env)
+    times = librosa.frames_to_time(attack_frames, sr=sr)
+    strengths = env[peak_frames]
     return [float(t) for t in times], [float(s) for s in strengths]
 
 

@@ -70,6 +70,13 @@ into the previous one, so accented notes reliably cut while quiet ones
 often don't. Tune this with `--section-variation` (0 = only accents cut,
 maximum variation; 1 = uniform, every single note/hit cuts; default 0.35).
 
+Melodic-note onset timing is backtracked from each note's loudest point to
+its actual attack (a strummed/plucked note rings up gradually, so the two
+can be tens of milliseconds apart), and detection is more sensitive than
+librosa's full-mix default since an isolated harmonic stream's attacks are
+softer. If it's still missing real notes, lower `--note-sensitivity`
+(default 0.05); if it's over-triggering on sustain/vibrato, raise it.
+
 ### Key flags
 
 | flag | default | meaning |
@@ -80,6 +87,7 @@ maximum variation; 1 = uniform, every single note/hit cuts; default 0.35).
 | `--scene-threshold` | 12.0 | cut-detection sensitivity for `--reference` (lower = catches more subtle cuts, risks false positives) |
 | `--intensity` | medium | cut density (`low`/`medium`/`high`) when no reference |
 | `--chorus` | — | `START:END` range to cut on every melodic note (repeatable) |
+| `--note-sensitivity` | 0.05 | melodic-note detection sensitivity (lower = catches more/quieter notes) |
 | `--drum-buildup` | — | `START:END` range to cut on every drum hit (repeatable) |
 | `--auto-chorus` | off | auto-detect the chorus/build-up instead of specifying ranges |
 | `--section-variation` | 0.35 | pacing variation within chorus/build-up ranges (0=accents only, 1=uniform) |
