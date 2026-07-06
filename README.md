@@ -48,6 +48,11 @@ https://www.youtube.com/watch?v=YYYYYYYYYYY|90|120
 
 Downloads are cached in `--cache-dir` (default `./cache`); re-runs reuse them.
 
+If you're behind a proxy, set `HTTPS_PROXY` (or `ALL_PROXY`) as usual — it's
+picked up automatically and passed through explicitly to the trimmed-download
+path, which shells out to ffmpeg and would otherwise silently bypass the
+proxy (ffmpeg doesn't read `HTTPS_PROXY` on its own the way most tools do).
+
 ### Chorus / drum-buildup section overrides
 
 By default cuts follow the beat/onset pacing (or a `--reference`'s rhythm)

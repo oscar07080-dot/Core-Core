@@ -56,6 +56,23 @@ def cache_key(entry: UrlEntry) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _detect_proxy() -> str | None:
+    """Read the standard proxy env vars.
+
+    yt-dlp's own network requests already honor these automatically, but a
+    trimmed (--start/--end) download shells out to ffmpeg as an external
+    downloader, and ffmpeg does *not* read HTTPS_PROXY on its own -- it needs
+    the proxy passed to it explicitly. Without this, section downloads can
+    silently bypass a required proxy and get blocked by the destination
+    server instead of actually reaching it through the approved egress path.
+    """
+    for var in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        value = os.environ.get(var)
+        if value:
+            return value
+    return None
+
+
 def ydl_options(entry: UrlEntry, cache_dir: str) -> dict:
     """Build the yt-dlp options dict for one entry (kept separate for testing)."""
     opts: dict = {
@@ -66,6 +83,9 @@ def ydl_options(entry: UrlEntry, cache_dir: str) -> dict:
         "quiet": True,
         "no_warnings": True,
     }
+    proxy = _detect_proxy()
+    if proxy:
+        opts["proxy"] = proxy
     if entry.start is not None or entry.end is not None:
         from yt_dlp.utils import download_range_func
 

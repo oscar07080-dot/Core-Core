@@ -1,6 +1,7 @@
 import pytest
 
 from coreedit.acquisition import UrlEntry, cache_key, parse_url_list, ydl_options
+from coreedit.acquisition import _detect_proxy
 
 
 def test_bare_url():
@@ -69,3 +70,28 @@ def test_ydl_options_trimmed_download_sets_ranges():
     opts = ydl_options(UrlEntry(url="https://example.com/v", start=5.0, end=9.0), cache_dir="/tmp/x")
     assert "download_ranges" in opts
     assert opts["force_keyframes_at_cuts"] is True
+
+
+def test_ydl_options_passes_proxy_when_set(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9999")
+    opts = ydl_options(UrlEntry(url="https://example.com/v"), cache_dir="/tmp/x")
+    assert opts["proxy"] == "http://127.0.0.1:9999"
+
+
+def test_ydl_options_no_proxy_key_when_unset(monkeypatch):
+    for var in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    opts = ydl_options(UrlEntry(url="https://example.com/v"), cache_dir="/tmp/x")
+    assert "proxy" not in opts
+
+
+def test_detect_proxy_checks_expected_vars_in_order(monkeypatch):
+    for var in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    assert _detect_proxy() is None
+
+    monkeypatch.setenv("ALL_PROXY", "http://fallback:8080")
+    assert _detect_proxy() == "http://fallback:8080"
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://preferred:8080")
+    assert _detect_proxy() == "http://preferred:8080"
