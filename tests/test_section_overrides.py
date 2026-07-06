@@ -152,3 +152,77 @@ def test_apply_section_overrides_thins_chorus_with_real_strength_data():
     assert len(uniform) >= 45
     # varied mode drops most of the quiet in-between notes, keeping mostly accents
     assert len(varied) < len(uniform) * 0.6
+
+
+# --- local-window normalization: fixes "some parts too rapid, some not rapid enough" ---
+
+
+def test_thin_onsets_local_window_treats_a_quiet_passage_fairly():
+    """A quiet passage's own accents shouldn't be crushed just because one
+    loud passage elsewhere in the range has a much higher peak -- each
+    passage's cut rate should reflect its own dynamics."""
+    # quiet passage 0-5s: accents at strength 1.0 every 4th note, rest 0.04
+    # loud passage 10-15s: accents at strength 10.0 every 4th note, rest 0.4
+    # (same 10x ratio locally, wildly different absolute scale)
+    times = [round(i * 0.2, 4) for i in range(25)] + [round(10 + i * 0.2, 4) for i in range(25)]
+    strengths = [1.0 if i % 4 == 0 else 0.04 for i in range(25)] + \
+                [10.0 if i % 4 == 0 else 0.4 for i in range(25)]
+
+    global_peak_kept = thin_onsets_by_strength(
+        times, strengths, random.Random(3), min_keep_prob=0.1, local_window=1000.0,
+    )
+    local_kept = thin_onsets_by_strength(
+        times, strengths, random.Random(3), min_keep_prob=0.1, local_window=2.0,
+    )
+
+    quiet_global = [t for t in global_peak_kept if t < 5.0]
+    quiet_local = [t for t in local_kept if t < 5.0]
+    # with a global peak (set by the loud passage), the quiet passage's own
+    # accents (strength 1.0 vs the loud passage's 10.0) look weak and get
+    # thinned much harder than with local comparison
+    assert len(quiet_local) > len(quiet_global)
+
+
+def test_thin_onsets_local_window_keeps_both_passages_proportional():
+    times = [round(i * 0.2, 4) for i in range(25)] + [round(10 + i * 0.2, 4) for i in range(25)]
+    strengths = [1.0 if i % 4 == 0 else 0.04 for i in range(25)] + \
+                [10.0 if i % 4 == 0 else 0.4 for i in range(25)]
+
+    kept = thin_onsets_by_strength(times, strengths, random.Random(5), min_keep_prob=0.05, local_window=2.0)
+    quiet_kept = [t for t in kept if t < 5.0]
+    loud_kept = [t for t in kept if t >= 10.0]
+    # roughly comparable retention rate in both passages (each ~6-7 accents
+    # out of 25 onsets), not one passage almost entirely dropped
+    assert len(quiet_kept) > 0
+    assert abs(len(quiet_kept) - len(loud_kept)) <= 4
+
+
+# --- separate percussive variation (--drum-variation): speeds up drums independently ---
+
+
+def test_percussive_min_keep_prob_overrides_harmonic_variation():
+    grid = _grid_with_strengths()
+    base = [0.0, 10.0]
+    overrides = [SectionOverride(start=0.0, end=10.0, kind="percussive")]
+
+    harmonic_setting_ignored = apply_section_overrides(
+        base, grid, overrides, seed=2, min_keep_prob=0.9, percussive_min_keep_prob=0.05,
+    )
+    # percussive_min_keep_prob (0.05, aggressive thinning) should govern here,
+    # not min_keep_prob (0.9, near-uniform) which only applies to harmonic
+    uniform_percussive = apply_section_overrides(
+        base, grid, overrides, seed=2, min_keep_prob=0.9, percussive_min_keep_prob=0.9,
+    )
+    assert len(harmonic_setting_ignored) < len(uniform_percussive)
+
+
+def test_percussive_min_keep_prob_defaults_to_min_keep_prob():
+    grid = _grid_with_strengths()
+    base = [0.0, 10.0]
+    overrides = [SectionOverride(start=0.0, end=10.0, kind="percussive")]
+
+    explicit = apply_section_overrides(base, grid, overrides, seed=4, min_keep_prob=0.2)
+    same_explicit = apply_section_overrides(
+        base, grid, overrides, seed=4, min_keep_prob=0.2, percussive_min_keep_prob=0.2,
+    )
+    assert explicit == same_explicit

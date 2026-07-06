@@ -98,11 +98,22 @@ def thin_onsets_by_strength(
     strengths: list[float],
     rng: random.Random,
     min_keep_prob: float = 0.35,
+    local_window: float = 2.0,
 ) -> list[float]:
     """Keep onsets with probability scaled by how pronounced each one is, so
     accented notes/hits reliably get their own cut while quieter ones often
     merge into the previous segment. Without this, cutting on "every onset"
     is a metronomically constant rate; this gives it real musical texture.
+
+    Each onset's strength is compared against the loudest onset within
+    `local_window` seconds of it, not the single loudest onset across the
+    whole (possibly many-second) override range. A global comparison makes a
+    quieter passage look uniformly weak next to one loud peak anywhere in
+    the section (under-cut there) while a locally loud passage looks
+    uniformly strong (over-cut) -- i.e. exactly "some parts too rapid, some
+    not rapid enough" relative to that passage's own dynamics. Comparing
+    locally instead means the cut rate tracks each passage's own relative
+    accents.
 
     `min_keep_prob` is the keep-probability floor for the weakest onset
     (1.0 = keep everything, uniform; lower = more variation). If no strength
@@ -113,10 +124,14 @@ def thin_onsets_by_strength(
         return []
     if len(strengths) != len(times):
         strengths = [1.0] * len(times)
-    peak = max(strengths) if strengths else 0.0
     kept = [times[0]]  # always keep the first onset in range
-    for t, s in zip(times[1:], strengths[1:]):
-        rel = (s / peak) if peak > 0 else 1.0
+    half = local_window / 2
+    for i in range(1, len(times)):
+        t, s = times[i], strengths[i]
+        local_peak = max(
+            sj for tj, sj in zip(times, strengths) if t - half <= tj <= t + half
+        )
+        rel = (s / local_peak) if local_peak > 0 else 1.0
         keep_prob = min_keep_prob + (1 - min_keep_prob) * rel
         if rng.random() < keep_prob:
             kept.append(t)
@@ -129,10 +144,16 @@ def apply_section_overrides(
     overrides: list[SectionOverride],
     seed: int | None = None,
     min_keep_prob: float = 0.35,
+    percussive_min_keep_prob: float | None = None,
+    local_window: float = 2.0,
 ) -> list[float]:
     """Within each override's time range, replace the normal cut boundaries
     with the grid's per-note ("harmonic") or per-hit ("percussive") onsets,
     thinned by onset strength so the pacing isn't a constant, metronomic rate.
+
+    `percussive_min_keep_prob` lets the drum-hit ("percussive") ranges use a
+    different variation/speed than the melodic ("harmonic") ones -- defaults
+    to `min_keep_prob` (same value for both) when not given.
 
     Boundaries outside every override range are left untouched.
     """
@@ -153,14 +174,16 @@ def apply_section_overrides(
     for o in clipped:
         if o.kind == "harmonic":
             times, strengths = grid.harmonic_onset_times, grid.harmonic_onset_strength
+            keep_prob = min_keep_prob
         else:
             times, strengths = grid.percussive_onset_times, grid.percussive_onset_strength
+            keep_prob = percussive_min_keep_prob if percussive_min_keep_prob is not None else min_keep_prob
         if len(strengths) != len(times):
             strengths = [1.0] * len(times)
         in_range = [(t, s) for t, s in zip(times, strengths) if o.start <= t <= o.end]
         range_times = [t for t, _ in in_range]
         range_strengths = [s for _, s in in_range]
-        points.update(thin_onsets_by_strength(range_times, range_strengths, rng, min_keep_prob))
+        points.update(thin_onsets_by_strength(range_times, range_strengths, rng, keep_prob, local_window))
         points.add(o.start)
         points.add(o.end)
     points.add(0.0)

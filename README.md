@@ -72,8 +72,15 @@ source separation:
 Cuts inside these ranges aren't a metronomically constant rate: each
 note/hit's actual strength decides whether it gets its own cut or merges
 into the previous one, so accented notes reliably cut while quiet ones
-often don't. Tune this with `--section-variation` (0 = only accents cut,
-maximum variation; 1 = uniform, every single note/hit cuts; default 0.35).
+often don't. Each onset is compared against the loudest onset within 2s of
+it, not the single loudest onset across the whole range — a purely global
+comparison makes a quieter passage look uniformly weak next to one loud
+peak elsewhere in the section (under-cut) while a locally loud passage
+looks uniformly strong (over-cut), i.e. some parts too rapid, some not
+rapid enough relative to their own dynamics. Tune with `--section-variation`
+(0 = only accents cut, maximum variation; 1 = uniform, every single note/hit
+cuts; default 0.35) and, separately, `--drum-variation` for just the
+`--drum-buildup` ranges (defaults to `--section-variation`'s value).
 
 Melodic notes are detected from the harmonic stream's RMS (loudness) rise,
 not spectral flux — checked visually against a real reference edit (plotting
@@ -110,7 +117,8 @@ over-triggering.
 | `--note-min-spacing` | 0.1 | minimum seconds between two detected melodic notes |
 | `--drum-buildup` | — | `START:END` range to cut on every drum hit (repeatable) |
 | `--auto-chorus` | off | auto-detect the chorus/build-up instead of specifying ranges |
-| `--section-variation` | 0.35 | pacing variation within chorus/build-up ranges (0=accents only, 1=uniform) |
+| `--section-variation` | 0.35 | pacing variation within `--chorus` ranges (0=accents only, 1=uniform) |
+| `--drum-variation` | (same as above) | pacing variation within `--drum-buildup` ranges specifically |
 | `--seed` | — | reproducible clip selection |
 | `--source-margin` | 0.5 | seconds skipped at each clip's start/end |
 | `--no-repeat-window` | 3 | recent clips excluded from reuse |

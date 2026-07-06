@@ -54,10 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "playing to register as separate notes, but risks a single sustained/"
                         "vibrato note being split into several false ones; default 0.1)")
     p.add_argument("--section-variation", type=float, default=0.35, dest="section_variation",
-                   help="within --chorus/--drum-buildup/--auto-chorus ranges, how much accented "
-                        "notes/hits are favored over quiet ones (0 = only accents get their own "
-                        "cut, weak ones merge into the previous shot; 1 = uniform, every single "
-                        "note/hit cuts regardless of accent; default 0.35)")
+                   help="within --chorus/--auto-chorus ranges, how much accented notes are "
+                        "favored over quiet ones (0 = only accents get their own cut, weak ones "
+                        "merge into the previous shot; 1 = uniform, every single note cuts "
+                        "regardless of accent; default 0.35)")
+    p.add_argument("--drum-variation", type=float, default=None, dest="drum_variation",
+                   help="same as --section-variation but for --drum-buildup ranges specifically "
+                        "(lower = faster/denser drum cutting); defaults to --section-variation's "
+                        "value if not given")
     p.add_argument("--no-repeat-window", type=int, default=3, dest="no_repeat_window",
                    help="how many recent clips to avoid reusing back-to-back")
     p.add_argument("--source-margin", type=float, default=0.5, dest="source_margin",
@@ -172,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
                   "(cutting on every drum hit)")
     if overrides:
         boundaries = timeline.apply_section_overrides(
-            boundaries, grid, overrides, seed=args.seed, min_keep_prob=args.section_variation
+            boundaries, grid, overrides, seed=args.seed,
+            min_keep_prob=args.section_variation,
+            percussive_min_keep_prob=args.drum_variation,
         )
     # align cuts to the output frame grid so per-segment fps conversion at
     # render time can't round each one, which would otherwise compound into
