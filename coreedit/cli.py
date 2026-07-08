@@ -82,6 +82,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "timeline in order, add song.m4a as the audio track, then use that "
                         "editor's 'replace clip' feature on each one to swap in your own "
                         "footage without disturbing the timing")
+    p.add_argument("--export-capcut", nargs="?", const="", metavar="NAME",
+                   dest="export_capcut", default=None,
+                   help="instead of one rendered mp4, create a native CapCut desktop draft "
+                        "(project) named NAME directly in CapCut's drafts folder, with the "
+                        "full timeline pre-built: one pre-trimmed clip per cut plus the song "
+                        "on the audio track. Open CapCut and the project is on the home "
+                        "screen; use Replace on each clip to swap in your own footage "
+                        "without touching the timing. Best-effort: the draft format is "
+                        "undocumented, so if your CapCut version rejects it, fall back to "
+                        "--export-clips. NAME defaults to the output filename's stem")
+    p.add_argument("--capcut-drafts-dir", dest="capcut_drafts_dir", metavar="DIR",
+                   help="where CapCut keeps its drafts, for --export-capcut (auto-detected "
+                        "in the standard Windows/macOS locations when omitted)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -231,6 +244,44 @@ def main(argv: list[str] | None = None) -> int:
         clips=clips,
     )
     from . import render as render_mod
+
+    if args.export_capcut is not None:
+        from . import capcut
+
+        drafts_dir = args.capcut_drafts_dir or capcut.find_drafts_dir()
+        if not drafts_dir:
+            print(
+                "error: couldn't find CapCut's drafts folder in the standard "
+                "locations:\n  "
+                + "\n  ".join(capcut._candidate_drafts_dirs())
+                + "\npass it explicitly with --capcut-drafts-dir "
+                "(in CapCut: Settings -> Drafts to see where it is)",
+                file=sys.stderr,
+            )
+            return 1
+        draft_name = args.export_capcut or os.path.splitext(os.path.basename(output))[0]
+        print(f"building CapCut draft '{draft_name}' in {drafts_dir}")
+        try:
+            draft_dir = capcut.export_capcut_draft(
+                segments, spec, drafts_dir, draft_name, verbose=args.verbose
+            )
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except FileExistsError:
+            print(f"error: a draft named '{draft_name}' already exists -- pick "
+                  "another name: --export-capcut NAME", file=sys.stderr)
+            return 1
+        print(
+            f"done: {draft_dir}\n"
+            "Open CapCut (restart it if it was already running) -- the project "
+            f"'{draft_name}' is on the home screen with the timeline pre-built. "
+            "Click a clip, hit Replace, pick your own footage; repeat per clip. "
+            "The cut timing is locked in by each clip's duration.\n"
+            "If CapCut won't open the draft (format changes between versions), "
+            "use --export-clips as the fallback."
+        )
+        return 0
 
     if args.export_clips:
         print(f"exporting {len(segments)} numbered clips + song audio -> {args.export_clips}")

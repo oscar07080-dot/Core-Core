@@ -61,24 +61,42 @@ python edit.py --song song.mp3 --clips-dir ./clips --chorus 45:60 --drum-buildup
 
 # export as numbered clips instead of one rendered mp4 (see below)
 python edit.py --song song.mp3 --clips-dir ./clips --export-clips ./for_capcut
+
+# or build a native CapCut project directly in CapCut's drafts folder
+python edit.py --song song.mp3 --clips-dir ./clips --export-capcut my_edit
 ```
 
 ### Editing the result yourself (e.g. in CapCut)
 
-`--export-clips DIR` writes each segment as its own numbered file
-(`001.mp4`, `002.mp4`, ...) plus the trimmed song audio (`song.m4a`) into
-`DIR`, instead of rendering one mp4. Drag the numbered clips into a
-timeline in order, add `song.m4a` as the audio track, then use your
-editor's **"replace clip"** feature on each one to swap in your own footage
-— it keeps the same trim/duration, so the cut timing survives untouched.
+Two options, most-automatic first:
 
-This is deliberately not a native CapCut project file: CapCut has no
-documented format or API, everything that exists is reverse-engineered and
-version-fragile (and newer versions reportedly obfuscate the draft file
-entirely), and it's desktop-only regardless — mobile drafts live in the
-app's private sandbox with no normal import path. The "replace clip"
-workflow above works identically on every CapCut version and platform,
-and in any other NLE that supports replacing a clip in place.
+**`--export-capcut [NAME]`** builds a native CapCut desktop draft
+(project) straight into CapCut's drafts folder: the full timeline
+pre-built — one pre-trimmed clip per cut, the song on the audio track,
+all media stored inside the draft folder. Open CapCut (restart it if it
+was already running) and the project is on the home screen; select each
+clip, hit **Replace**, and pick your own footage — Replace keeps the
+slot's duration, so the cut timing is untouched. Requires the optional
+`pyJianYingDraft` package (`pip install pyJianYingDraft`) and CapCut
+**desktop** (drafts on mobile live in the app's private sandbox — no
+import path). The drafts folder is auto-detected in the standard
+Windows/macOS locations; if yours is elsewhere (CapCut: Settings →
+Drafts shows the path), pass `--capcut-drafts-dir DIR`. **Caveat**: the
+draft format is undocumented and reverse-engineered, and newer CapCut
+versions have been reported to encrypt drafts — if the project doesn't
+appear or won't open, fall back to `--export-clips`. The draft must be
+generated directly into the real drafts folder on the machine running
+CapCut (media is referenced by absolute path), so run the tool on that
+machine rather than copying a draft folder over.
+
+**`--export-clips DIR`** (works with every editor/version) writes each
+segment as its own numbered file (`001.mp4`, `002.mp4`, ...) plus the
+trimmed song audio (`song.m4a`) into `DIR`, instead of rendering one
+mp4. Drag the numbered clips into a timeline in order, add `song.m4a`
+as the audio track, then use your editor's **"replace clip"** feature on
+each one to swap in your own footage — it keeps the same trim/duration,
+so the cut timing survives untouched. Works in CapCut (any version) and
+any other NLE that can replace a clip in place.
 
 ### URL list format (`urls.txt`)
 
@@ -176,6 +194,9 @@ over-triggering.
 | `--seed` | — | reproducible clip selection |
 | `--source-margin` | 0.5 | seconds skipped at each clip's start/end |
 | `--no-repeat-window` | 3 | recent clips excluded from reuse |
+| `--export-clips` | — | export numbered per-cut clips + song instead of one mp4 |
+| `--export-capcut` | — | build a native CapCut draft in CapCut's drafts folder |
+| `--capcut-drafts-dir` | auto-detect | CapCut drafts folder location for `--export-capcut` |
 | `--output` | `{subject}_{timestamp}.mp4` | output path |
 
 ## How it works
